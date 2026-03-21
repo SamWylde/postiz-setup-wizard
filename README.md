@@ -1,6 +1,12 @@
 # Postiz Setup Wizard
 
-A Windows desktop app that automates self-hosting [Postiz](https://postiz.com) — turning hours of terminal work into a guided point-and-click experience.
+[Postiz](https://postiz.com) is an open-source social media scheduling and analytics platform — a self-hostable alternative to Buffer, Hootsuite, and Later. It lets you compose posts, schedule them across multiple social platforms, and track engagement from a single dashboard.
+
+This wizard is a Windows desktop app that automates self-hosting Postiz, turning hours of terminal work into a guided point-and-click experience. No command line knowledge required.
+
+## Download
+
+Grab the latest installer from the [Releases page](https://github.com/SamWylde/postiz-setup-wizard/releases/latest).
 
 ## What it does
 
@@ -13,7 +19,7 @@ Self-hosting Postiz normally requires Docker setup, configuring 50+ environment 
 5. **Connect Platforms** — Step-by-step sub-wizards for 15 social platforms with copyable callback URLs
 6. **Verify & Finish** — Health checks, summary, and system tray minimization
 
-After setup, the app runs in the system tray to maintain the tunnel and monitor services. Includes a status dashboard and recovery center for troubleshooting.
+After setup, the app runs in the system tray to maintain the tunnel and monitor services. Includes a live status dashboard, automatic update checks, Docker log viewer, diagnostics export, and a recovery center for troubleshooting.
 
 ## Supported Platforms
 
