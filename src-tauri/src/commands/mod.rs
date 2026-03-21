@@ -8,3 +8,4 @@ pub mod resume;
 pub mod secrets;
 pub mod snapshot;
 pub mod tunnel;
+pub mod updater;

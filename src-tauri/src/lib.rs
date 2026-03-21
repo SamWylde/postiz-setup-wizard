@@ -18,6 +18,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // Build tray menu
             let open_postiz =
@@ -30,6 +31,8 @@ pub fn run() {
                 MenuItem::with_id(app, "restart_postiz", "Restart Postiz", true, None::<&str>)?;
             let stop_postiz =
                 MenuItem::with_id(app, "stop_postiz", "Stop Postiz", true, None::<&str>)?;
+            let check_updates =
+                MenuItem::with_id(app, "check_updates", "Check for Updates", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
 
             let menu = Menu::with_items(
@@ -40,6 +43,7 @@ pub fn run() {
                     &view_status,
                     &restart_postiz,
                     &stop_postiz,
+                    &check_updates,
                     &quit,
                 ],
             )?;
@@ -122,6 +126,14 @@ pub fn run() {
                                 }
                             });
                         }
+                        "check_updates" => {
+                            // Show main window and emit event to trigger update check
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                            let _ = app.emit("trigger-update-check", ());
+                        }
                         "quit" => {
                             // Kill only our tunnel process by PID, not all cloudflared instances
                             let state: tauri::State<SharedState> = app.state();
@@ -147,6 +159,10 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
 
             Ok(())
         })
@@ -213,6 +229,9 @@ pub fn run() {
             commands::import::import_existing_install,
             commands::install::clean_staged_files,
             commands::secrets::generate_secrets,
+            commands::updater::check_for_update,
+            commands::updater::install_update,
+            commands::updater::get_current_app_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

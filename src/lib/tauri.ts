@@ -157,6 +157,23 @@ export const cancelInstall = () => invoke<string>("cancel_install");
 export const generateSecrets = () =>
   invoke<[string, string]>("generate_secrets");
 
+// Updater commands
+export interface UpdateInfo {
+  available: boolean;
+  current_version: string;
+  latest_version: string;
+  body?: string;
+}
+
+export const checkForUpdate = () =>
+  invoke<UpdateInfo>("check_for_update");
+
+export const installUpdate = () =>
+  invoke<void>("install_update");
+
+export const getCurrentAppVersion = () =>
+  invoke<string>("get_current_app_version");
+
 // Event listeners
 export const onDockerProgress = (
   callback: (event: { payload: string }) => void,
@@ -173,3 +190,11 @@ export const onTunnelUrl = (
 export const onTunnelStatus = (
   callback: (event: { payload: string }) => void,
 ): Promise<UnlistenFn> => listen("tunnel-status", callback);
+
+export const onUpdateStatus = (
+  callback: (event: { payload: string }) => void,
+): Promise<UnlistenFn> => listen("update-status", callback);
+
+export const onUpdateProgress = (
+  callback: (event: { payload: { percent: number; downloaded: number; total: number } }) => void,
+): Promise<UnlistenFn> => listen("update-progress", callback);

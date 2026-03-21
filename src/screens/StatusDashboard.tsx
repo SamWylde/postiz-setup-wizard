@@ -6,7 +6,11 @@ import {
   stopStack,
   reconnectTunnel,
   exportDiagnostics,
+  checkForUpdate,
+  installUpdate,
+  getCurrentAppVersion,
   type InstallSnapshot,
+  type UpdateInfo,
 } from "../lib/tauri";
 import { useWizardStore } from "../store/wizardStore";
 import { open } from "@tauri-apps/plugin-shell";
@@ -29,6 +33,8 @@ import {
   Wifi,
   WifiOff,
   ArrowRight,
+  CloudDownload,
+  CheckCircle2,
 } from "lucide-react";
 
 const POLL_INTERVAL = 15_000;
@@ -43,6 +49,10 @@ export function StatusDashboard() {
   const [reconnecting, setReconnecting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [updateChecking, setUpdateChecking] = useState(false);
+  const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>("");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const localUrl = `http://localhost:${port}`;
@@ -58,11 +68,38 @@ export function StatusDashboard() {
 
   useEffect(() => {
     fetchSnapshot();
+    getCurrentAppVersion().then(setAppVersion).catch(() => {});
     intervalRef.current = setInterval(fetchSnapshot, POLL_INTERVAL);
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
   }, [fetchSnapshot]);
+
+  const handleCheckForUpdate = async () => {
+    setUpdateChecking(true);
+    try {
+      const info = await checkForUpdate();
+      setUpdateInfo(info);
+      if (!info.available) {
+        showToast("You're running the latest version.", "success");
+      }
+    } catch (err) {
+      showToast(`Update check failed: ${String(err)}`, "error");
+    } finally {
+      setUpdateChecking(false);
+    }
+  };
+
+  const handleInstallUpdate = async () => {
+    setUpdateInstalling(true);
+    try {
+      await installUpdate();
+      showToast("Update installed. Restarting...", "success");
+    } catch (err) {
+      showToast(`Update failed: ${String(err)}`, "error");
+      setUpdateInstalling(false);
+    }
+  };
 
   const handleOpenPostiz = async () => {
     const url = snapshot?.tunnel_url ?? localUrl;
@@ -255,6 +292,56 @@ export function StatusDashboard() {
             />
           </div>
         </div>
+      </Card>
+
+      {/* Update section */}
+      <Card className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <CloudDownload className="h-4 w-4 text-gray-500" />
+          <h3 className="text-sm font-medium text-gray-700">App Updates</h3>
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-gray-600">
+              Current version: <span className="font-mono font-medium">v{appVersion}</span>
+            </p>
+            {updateInfo?.available && (
+              <p className="text-sm text-green-600 mt-1">
+                Update available: <span className="font-mono font-medium">v{updateInfo.latest_version}</span>
+              </p>
+            )}
+            {updateInfo && !updateInfo.available && (
+              <p className="text-sm text-gray-500 mt-1 flex items-center gap-1">
+                <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                Up to date
+              </p>
+            )}
+          </div>
+          <div className="flex gap-2">
+            {updateInfo?.available ? (
+              <Button
+                onClick={handleInstallUpdate}
+                loading={updateInstalling}
+              >
+                Install Update & Restart
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                onClick={handleCheckForUpdate}
+                loading={updateChecking}
+              >
+                Check for Updates
+              </Button>
+            )}
+          </div>
+        </div>
+        {updateInfo?.body && (
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <p className="text-xs font-medium text-gray-500 mb-1">Release notes</p>
+            <p className="text-sm text-gray-600 whitespace-pre-wrap">{updateInfo.body}</p>
+          </div>
+        )}
       </Card>
 
       {/* Info section */}

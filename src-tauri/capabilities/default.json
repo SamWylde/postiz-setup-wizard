@@ -23,6 +23,8 @@
     "core:window:allow-set-focus",
     "notification:default",
     "notification:allow-notify",
-    "notification:allow-request-permission"
+    "notification:allow-request-permission",
+    "updater:default",
+    "process:default"
   ]
 }

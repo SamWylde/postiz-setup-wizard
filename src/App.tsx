@@ -16,11 +16,12 @@ import {
   getTunnelStatus,
   updateBaseUrls,
   repairStack,
+  checkForUpdate,
   type InstallSnapshot,
 } from "./lib/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
-import { ToastContainer } from "./components/ui/Toast";
+import { ToastContainer, showToast } from "./components/ui/Toast";
 
 const screens = [
   PrepareComputer,
@@ -152,6 +153,50 @@ function App() {
   useEffect(() => {
     const unlisten = listen<string>("copy-to-clipboard", (event) => {
       writeText(event.payload).catch(() => {});
+    });
+
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
+  // Check for updates after startup settles (only on dashboard/recovery)
+  useEffect(() => {
+    if (view !== "dashboard" && view !== "recovery") return;
+
+    const timer = setTimeout(async () => {
+      try {
+        const info = await checkForUpdate();
+        if (info.available) {
+          showToast(
+            `Update available: v${info.latest_version}. Check the dashboard to install.`,
+            "success",
+          );
+        }
+      } catch {
+        // silently ignore update check failures
+      }
+    }, 3000);
+
+    return () => clearTimeout(timer);
+  }, [view]);
+
+  // Listen for tray "Check for Updates" trigger
+  useEffect(() => {
+    const unlisten = listen("trigger-update-check", async () => {
+      try {
+        const info = await checkForUpdate();
+        if (info.available) {
+          showToast(
+            `Update available: v${info.latest_version}. Check the dashboard to install.`,
+            "success",
+          );
+        } else {
+          showToast("You're running the latest version.", "success");
+        }
+      } catch (err) {
+        showToast(`Update check failed: ${String(err)}`, "error");
+      }
     });
 
     return () => {

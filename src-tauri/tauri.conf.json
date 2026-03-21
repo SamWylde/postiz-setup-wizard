@@ -29,6 +29,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "msi"],
+    "createUpdaterArtifacts": "v2Compatible",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,6 +41,12 @@
   "plugins": {
     "shell": {
       "open": true
+    },
+    "updater": {
+      "pubkey": "RWSjvBuGkaLqzApHVHGG0J+rQfogKHHAztCfgLql8pgwUkc8fEIQ3lH5",
+      "endpoints": [
+        "https://github.com/SamWylde/postiz-setup-wizard/releases/latest/download/latest.json"
+      ]
     }
   }
 }
