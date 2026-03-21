@@ -43,7 +43,7 @@
       "open": true
     },
     "updater": {
-      "pubkey": "RWQ5Uc5SuGlrwT+2j3VmSS9WeHFSFkhqrFpacwSLP5xDmlOtxf3OsMZV",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxNkI2OUI4NTJDRTUxMzkKUldRNVVjNVN1R2xyd1QrMmozVm1TUzlXZUhGU0ZraHFyRnBhY3dTTFA1eERtbE90eGYzT3NNWlYK",
       "endpoints": [
         "https://github.com/SamWylde/postiz-setup-wizard/releases/latest/download/latest.json"
       ]
