@@ -2,71 +2,97 @@
 
 [Postiz](https://postiz.com) is an open-source social media scheduling and analytics platform — a self-hostable alternative to Buffer, Hootsuite, and Later. It lets you compose posts, schedule them across multiple social platforms, and track engagement from a single dashboard.
 
-This wizard is a Windows desktop app that automates self-hosting Postiz, turning hours of terminal work into a guided point-and-click experience. No command line knowledge required.
+**This wizard lets you self-host Postiz on your Windows PC in minutes, with zero command line knowledge.** It handles everything — installing Docker, configuring services, setting up HTTPS, and connecting your social accounts — through a simple step-by-step interface.
 
-## Download
+[![Download](https://img.shields.io/github/v/release/SamWylde/postiz-setup-wizard?label=Download&style=for-the-badge)](https://github.com/SamWylde/postiz-setup-wizard/releases/latest)
 
-Grab the latest installer from the [Releases page](https://github.com/SamWylde/postiz-setup-wizard/releases/latest).
+## Features
 
-## What it does
+### Guided Setup (6 steps, ~10 minutes)
+1. **Prepare Computer** — Automatically detects and installs prerequisites (WSL2, Docker Desktop, Cloudflare Tunnel)
+2. **Install Postiz** — Choose install location, auto-generates secrets, pulls Docker images, starts all services
+3. **Create Account** — Waits for Postiz to come online, then walks you through first account creation
+4. **Create Web Link** — Sets up a Cloudflare Quick Tunnel so you have a public HTTPS URL (required for OAuth callbacks)
+5. **Connect Platforms** — Step-by-step guides for each social platform, with pre-filled callback URLs you can copy with one click
+6. **Verify & Finish** — Runs health checks and confirms everything is working
 
-Self-hosting Postiz normally requires Docker setup, configuring 50+ environment variables, HTTPS tunnel setup, and OAuth app registration across multiple developer portals. This wizard handles all of it through a 6-step guided flow:
+### After Setup
+- **System tray app** — Keeps your tunnel running and services monitored in the background
+- **Live dashboard** — Container health, tunnel status, and overall system health at a glance
+- **Auto-updates** — Checks for new versions and installs them with one click
+- **Docker log viewer** — View container logs without opening a terminal
+- **Diagnostics export** — One-click export for troubleshooting
+- **Recovery center** — Detects problems on startup and offers guided repair
 
-1. **Prepare Computer** — Detects and installs prerequisites (WSL2, Docker Desktop, cloudflared)
-2. **Install Postiz** — Picks install location, generates secrets, pulls Docker images, starts containers
-3. **Create Account** — Verifies Postiz is running and guides you through account creation
-4. **Create Web Link** — Sets up a Cloudflare Quick Tunnel for HTTPS access (needed for OAuth)
-5. **Connect Platforms** — Step-by-step sub-wizards for 15 social platforms with copyable callback URLs
-6. **Verify & Finish** — Health checks, summary, and system tray minimization
+### Supported Social Platforms
 
-After setup, the app runs in the system tray to maintain the tunnel and monitor services. Includes a live status dashboard, automatic update checks, Docker log viewer, diagnostics export, and a recovery center for troubleshooting.
+Facebook · Instagram · LinkedIn · X (Twitter) · Reddit · Threads · YouTube · TikTok · Pinterest · Discord · Slack · Mastodon · Bluesky · Dribbble
 
-## Supported Platforms
-
-Facebook, Instagram, LinkedIn, X (Twitter), Reddit, Threads, YouTube, TikTok, Pinterest, Discord, Slack, Mastodon, Bluesky, Dribbble
-
-## Tech Stack
-
-- **Desktop framework:** Tauri 2 (Rust backend + system WebView)
-- **Frontend:** React 19, TypeScript, Tailwind CSS v4, Zustand
-- **Infrastructure:** Docker Compose, cloudflared Quick Tunnels
-
-## Prerequisites
+## Requirements
 
 - Windows 10 or later
-- ~3 GB free disk space
-- ~2 GB available RAM
+- ~3 GB free disk space, ~2 GB available RAM
 
-The wizard will detect and offer to install any missing dependencies (WSL2, Docker Desktop, cloudflared).
+That's it. The wizard detects and installs everything else automatically.
+
+---
 
 ## Development
 
+### Getting Started
+
+You'll need [Node.js](https://nodejs.org/) (v20+), [Rust](https://rustup.rs/), and the Visual Studio "Desktop development with C++" workload.
+
 ```bash
-# Install frontend dependencies
 npm install
-
-# Run in development mode
 npm run tauri dev
+```
 
-# Build for production
+### Building
+
+```bash
 npm run tauri build
 ```
+
+Build from a **Developer Command Prompt** (not Git Bash) to avoid MSVC linker conflicts.
 
 ### Project Structure
 
 ```
 src/                    # React frontend
-  screens/              # Wizard step screens + dashboard/recovery
-  components/           # UI components + provider registry
+  screens/              # Wizard step screens + dashboard + recovery
+  components/           # UI components + social provider registry
   store/                # Zustand state management
   lib/                  # Tauri command wrappers
 
 src-tauri/              # Rust backend
-  src/commands/         # Tauri commands (bootstrap, docker, tunnel, env, etc.)
+  src/commands/         # Tauri commands (bootstrap, docker, tunnel, env, updater)
   src/templates/        # Embedded docker-compose.yml + Temporal config
   src/state.rs          # Shared application state
 ```
 
+### Tech Stack
+
+- **Desktop:** Tauri 2 (Rust + system WebView)
+- **Frontend:** React 19, TypeScript, Tailwind CSS v4, Zustand
+- **Infrastructure:** Docker Compose, cloudflared
+
+### Releasing
+
+Versions are defined in three files that **must** stay in sync:
+- `package.json` → `version`
+- `src-tauri/Cargo.toml` → `version`
+- `src-tauri/tauri.conf.json` → `version`
+
+To release, update all three, commit, then push a tag:
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+GitHub Actions will build the installer, sign it, create a GitHub Release with the `.exe`, `.msi`, and updater manifest (`latest.json`). Existing installations will detect the new version automatically.
+
 ## License
 
-MIT
+[MIT](LICENSE)
