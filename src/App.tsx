@@ -19,7 +19,7 @@ import {
   checkForUpdate,
   type InstallSnapshot,
 } from "./lib/tauri";
-import { listen } from "@tauri-apps/api/event";
+import { listen, emit } from "@tauri-apps/api/event";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { ToastContainer, showToast } from "./components/ui/Toast";
 
@@ -168,8 +168,10 @@ function App() {
       try {
         const info = await checkForUpdate();
         if (info.available) {
+          // Share with dashboard so the install button appears immediately
+          await emit("update-info-discovered", info);
           showToast(
-            `Update available: v${info.latest_version}. Check the dashboard to install.`,
+            `Update available: v${info.latest_version}`,
             "success",
           );
         }
@@ -187,8 +189,9 @@ function App() {
       try {
         const info = await checkForUpdate();
         if (info.available) {
+          await emit("update-info-discovered", info);
           showToast(
-            `Update available: v${info.latest_version}. Check the dashboard to install.`,
+            `Update available: v${info.latest_version}`,
             "success",
           );
         } else {

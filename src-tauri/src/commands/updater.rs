@@ -1,5 +1,7 @@
 use serde::Serialize;
-use tauri::{Emitter, Manager};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+use tauri::Emitter;
 use tauri_plugin_updater::UpdaterExt;
 
 #[derive(Serialize)]
@@ -70,13 +72,19 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 
     let _ = app.emit("update-status", "downloading");
 
+    // Track cumulative downloaded bytes (chunk_length is per-chunk, not cumulative)
+    let downloaded = Arc::new(AtomicU64::new(0));
+    let downloaded_clone = downloaded.clone();
     let app_handle = app.clone();
-    update
-        .download_and_install(
+
+    let bytes = update
+        .download(
             move |chunk_length, content_length| {
                 let total = content_length.unwrap_or(0);
+                let cumulative = downloaded_clone.fetch_add(chunk_length as u64, Ordering::Relaxed)
+                    + chunk_length as u64;
                 let percent = if total > 0 {
-                    ((chunk_length as f64 / total as f64) * 100.0) as u8
+                    ((cumulative as f64 / total as f64) * 100.0).min(100.0) as u8
                 } else {
                     0
                 };
@@ -84,30 +92,32 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
                     "update-progress",
                     UpdateProgress {
                         percent,
-                        downloaded: chunk_length as u64,
+                        downloaded: cumulative,
                         total,
                     },
                 );
             },
-            || {
-                // Download finished
-            },
+            || {},
         )
         .await
         .map_err(|e| {
             let _ = app.emit("update-status", "error");
-            format!("Failed to install update: {}", e)
+            format!("Failed to download update: {}", e)
         })?;
 
-    let _ = app.emit("update-status", "completed");
+    // Emit installing status before install — on Windows, install() calls
+    // process::exit(0) so nothing after it will execute.
+    let _ = app.emit("update-status", "installing");
 
-    // Restart the app after a brief delay
-    let app_handle = app.clone();
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        app_handle.restart();
-    });
+    update.install(bytes).map_err(|e| {
+        let _ = app.emit("update-status", "error");
+        format!("Failed to install update: {}", e)
+    })?;
 
+    // This code only runs on platforms where install() doesn't exit the process.
+    // On Windows NSIS/MSI, the process will have already exited above.
+    app.restart();
+    #[allow(unreachable_code)]
     Ok(())
 }
 

@@ -14,6 +14,7 @@ import {
 } from "../lib/tauri";
 import { useWizardStore } from "../store/wizardStore";
 import { open } from "@tauri-apps/plugin-shell";
+import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
@@ -75,6 +76,16 @@ export function StatusDashboard() {
     };
   }, [fetchSnapshot]);
 
+  // Listen for update info discovered by App.tsx (startup check or tray menu)
+  useEffect(() => {
+    const unlisten = listen<UpdateInfo>("update-info-discovered", (event) => {
+      setUpdateInfo(event.payload);
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  }, []);
+
   const handleCheckForUpdate = async () => {
     setUpdateChecking(true);
     try {
@@ -93,8 +104,10 @@ export function StatusDashboard() {
   const handleInstallUpdate = async () => {
     setUpdateInstalling(true);
     try {
+      // On Windows, the app process exits during install, so this
+      // promise may never resolve. The "installing" status is emitted
+      // by Rust before exit. If it does resolve (non-Windows), restart happens server-side.
       await installUpdate();
-      showToast("Update installed. Restarting...", "success");
     } catch (err) {
       showToast(`Update failed: ${String(err)}`, "error");
       setUpdateInstalling(false);
