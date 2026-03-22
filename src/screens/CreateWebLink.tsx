@@ -5,8 +5,12 @@ import {
   updateBaseUrls,
   restartAndVerify,
   saveResumeState,
+  runBootstrap,
+  scanMachine,
   onTunnelUrl,
   onTunnelStatus,
+  type TunnelProvider,
+  type BootstrapAction,
 } from "../lib/tauri";
 import { friendlyError } from "../lib/errors";
 import { Card } from "../components/ui/Card";
@@ -15,9 +19,24 @@ import { Input } from "../components/ui/Input";
 import { CopyField } from "../components/ui/CopyField";
 import { StatusIndicator } from "../components/ui/StatusIndicator";
 import { NavigationButtons } from "../components/wizard/NavigationButtons";
-import { AlertTriangle, Globe, Link, Monitor, ChevronDown } from "lucide-react";
+import { AlertTriangle, Globe, Link, Monitor, ChevronDown, Download } from "lucide-react";
 
 type TunnelMode = "temporary" | "permanent" | "none";
+
+interface ProviderOption {
+  id: TunnelProvider;
+  name: string;
+  description: string;
+  installed: boolean;
+  installAction: BootstrapAction | null;
+}
+
+const PROVIDER_WARNINGS: Record<TunnelProvider, string> = {
+  cloudflared: "This link changes every time you restart this app.",
+  ngrok: "Free tier has request limits. Upgrade for a stable URL.",
+  zrok: "Free share URLs are ephemeral. Use `zrok reserve` for stable URLs.",
+  pinggy: "Free tier URL changes on restart. Use a token for stability.",
+};
 
 export function CreateWebLink() {
   const {
@@ -29,15 +48,32 @@ export function CreateWebLink() {
     setTunnelUrl,
     tunnelMode,
     setTunnelMode,
+    tunnelProvider,
+    setTunnelProvider,
     permanentDomain,
     setPermanentDomain,
     setRemoteReachable,
     setStep,
+    machineState,
+    setMachineState,
   } = useWizardStore();
   const [statusMessage, setStatusMessage] = useState("");
   const [domainApplied, setDomainApplied] = useState(false);
+  const [domainReachable, setDomainReachable] = useState(true);
   const [applyingDomain, setApplyingDomain] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [providerConfig, setProviderConfig] = useState("");
+  const [installing, setInstalling] = useState<string | null>(null);
+
+  // Rescan machine state on mount so provider availability is up to date
+  // (e.g. after resume or recovery when machineState may be null)
+  useEffect(() => {
+    if (!machineState) {
+      scanMachine()
+        .then((state) => setMachineState(state))
+        .catch(() => {});
+    }
+  }, []);
 
   useEffect(() => {
     const unlistenUrl = onTunnelUrl((e) => {
@@ -54,13 +90,65 @@ export function CreateWebLink() {
     };
   }, []);
 
+  const providerOptions: ProviderOption[] = [
+    {
+      id: "cloudflared",
+      name: "Cloudflare",
+      description: "No account needed. URL changes on restart.",
+      installed: machineState?.cloudflared_installed ?? false,
+      installAction: "InstallCloudflared",
+    },
+    {
+      id: "ngrok",
+      name: "ngrok",
+      description: "Free account for static URLs.",
+      installed: machineState?.ngrok_installed ?? false,
+      installAction: "InstallNgrok",
+    },
+    {
+      id: "zrok",
+      name: "zrok",
+      description: "Open-source. Free stable URLs.",
+      installed: machineState?.zrok_installed ?? false,
+      installAction: "InstallZrok",
+    },
+    {
+      id: "pinggy",
+      name: "Pinggy",
+      description: "No install needed (uses SSH).",
+      installed: machineState?.ssh_available ?? true,
+      installAction: null,
+    },
+  ];
+
+  const selectedProvider = providerOptions.find((p) => p.id === tunnelProvider);
+
+  const handleInstallProvider = async (opt: ProviderOption) => {
+    if (!opt.installAction) return;
+    setInstalling(opt.id);
+    try {
+      await runBootstrap(opt.installAction);
+    } catch {
+      // Error will be visible on re-scan
+    }
+    // Re-scan machine state so the freshly installed provider shows as available
+    try {
+      const state = await scanMachine();
+      setMachineState(state);
+    } catch {
+      // Ignore scan errors
+    }
+    setInstalling(null);
+  };
+
   const handleStartTunnel = async () => {
     setTunnelMode("temporary");
     setTunnelStatus("starting");
     setStatusMessage("Starting secure tunnel...");
 
     try {
-      const url = await startTunnel(port);
+      const config = providerConfig.trim() || undefined;
+      const url = await startTunnel(port, tunnelProvider, config);
       setTunnelUrl(url);
       setTunnelStatus("restarting");
       setStatusMessage("Updating Postiz configuration...");
@@ -94,21 +182,54 @@ export function CreateWebLink() {
   };
 
   const handleApplyDomain = async () => {
-    if (!permanentDomain.trim()) return;
+    const raw = permanentDomain.trim();
+    if (!raw) return;
+
+    // Validate URL format
+    const domain = raw.replace(/\/+$/, "");
+    if (!domain.startsWith("https://")) {
+      setStatusMessage("Domain must start with https:// — social platforms require HTTPS.");
+      return;
+    }
+    try {
+      const parsed = new URL(domain);
+      if (!parsed.hostname.includes(".")) {
+        setStatusMessage("Please enter a valid domain (e.g. https://postiz.example.com).");
+        return;
+      }
+    } catch {
+      setStatusMessage("Invalid URL format. Enter a full URL like https://postiz.example.com");
+      return;
+    }
 
     setApplyingDomain(true);
     setStatusMessage("Applying domain configuration...");
 
     try {
-      const domain = permanentDomain.trim().replace(/\/+$/, "");
       await updateBaseUrls(installPath, domain);
       await restartAndVerify(installPath);
       await saveResumeState();
 
       setTunnelUrl(domain);
       setTunnelStatus("running");
+
+      // Verify the public URL is actually reachable via HTTPS
+      setStatusMessage("Verifying public URL...");
+      let reachable = false;
+      try {
+        await fetch(domain, {
+          mode: "no-cors",
+          signal: AbortSignal.timeout(10000),
+        });
+        reachable = true;
+        setStatusMessage("Domain applied and verified!");
+      } catch {
+        setStatusMessage(
+          "Domain applied, but could not reach it publicly. Verify DNS and HTTPS are configured correctly — social platform callbacks may not work until this is resolved.",
+        );
+      }
+      setDomainReachable(reachable);
       setDomainApplied(true);
-      setStatusMessage("Domain applied successfully!");
     } catch (err) {
       setStatusMessage(friendlyError(String(err)));
     } finally {
@@ -134,27 +255,116 @@ export function CreateWebLink() {
       </h2>
       <p className="text-gray-600 mb-6">
         Social media platforms need a public URL to communicate with Postiz.
-        We'll create one automatically — just click the button below.
+        Choose a tunnel provider and we'll create one automatically.
       </p>
 
-      {/* Primary action: create temporary link (recommended) */}
+      {/* Provider selector + primary action */}
       {tunnelStatus === "idle" && tunnelMode !== "permanent" && tunnelMode !== "none" && (
-        <Card className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Globe className="h-4 w-4 text-blue-600" />
-            <h3 className="text-sm font-medium text-gray-900">
-              Recommended
-            </h3>
-          </div>
-          <p className="text-sm text-gray-600 mb-4">
-            We'll create a temporary public URL using Cloudflare. This is the
-            easiest way to get started — no domain or server setup required.
-          </p>
-          <Button onClick={handleStartTunnel}>
-            <Globe className="h-4 w-4" />
-            Create Web Link
-          </Button>
-        </Card>
+        <>
+          <Card className="mb-4">
+            <div className="flex items-center gap-2 mb-3">
+              <Globe className="h-4 w-4 text-blue-600" />
+              <h3 className="text-sm font-medium text-gray-900">
+                Choose a tunnel provider
+              </h3>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {providerOptions.map((opt) => (
+                <button
+                  key={opt.id}
+                  onClick={() => {
+                    if (opt.installed) {
+                      setTunnelProvider(opt.id);
+                      setProviderConfig("");
+                    }
+                  }}
+                  disabled={!opt.installed && installing !== null}
+                  className={`relative text-left rounded-lg border-2 p-3 transition-colors ${
+                    tunnelProvider === opt.id
+                      ? "border-blue-500 bg-blue-50"
+                      : opt.installed
+                        ? "border-gray-200 hover:border-gray-300 bg-white"
+                        : "border-gray-100 bg-gray-50 opacity-75"
+                  }`}
+                >
+                  <p className="text-sm font-medium text-gray-900">{opt.name}</p>
+                  <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>
+                  {!opt.installed && opt.installAction && (
+                    <Button
+                      variant="secondary"
+                      className="mt-2 text-xs"
+                      loading={installing === opt.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleInstallProvider(opt);
+                      }}
+                    >
+                      <Download className="h-3 w-3" />
+                      Install
+                    </Button>
+                  )}
+                </button>
+              ))}
+            </div>
+          </Card>
+
+          {/* Per-provider config inputs */}
+          {tunnelProvider === "ngrok" && (
+            <Card className="mb-4">
+              <Input
+                label="ngrok authtoken (optional)"
+                value={providerConfig}
+                onChange={(e) => setProviderConfig(e.target.value)}
+                placeholder="Paste your ngrok authtoken for a stable URL"
+                secret
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Get a free authtoken at ngrok.com/signup
+              </p>
+            </Card>
+          )}
+          {tunnelProvider === "zrok" && (
+            <Card className="mb-4">
+              <p className="text-sm text-gray-700 mb-2">
+                <strong>First time using zrok?</strong> You need to create a free account
+                and enable your environment before sharing:
+              </p>
+              <ol className="text-sm text-gray-600 list-decimal list-inside space-y-1 mb-3">
+                <li>Sign up at <span className="font-mono text-blue-600">zrok.io</span> and copy your enable token</li>
+                <li>Open a terminal and run: <code className="bg-gray-100 px-1 py-0.5 rounded text-xs">zrok enable YOUR_TOKEN</code></li>
+              </ol>
+              <p className="text-xs text-gray-500">
+                You only need to do this once. After enabling, zrok will remember your account.
+              </p>
+            </Card>
+          )}
+          {tunnelProvider === "pinggy" && (
+            <Card className="mb-4">
+              <Input
+                label="Pinggy token (optional)"
+                value={providerConfig}
+                onChange={(e) => setProviderConfig(e.target.value)}
+                placeholder="Paste your Pinggy token for a stable URL"
+                secret
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Get a token at pinggy.io for a persistent URL
+              </p>
+            </Card>
+          )}
+
+          {/* Start button */}
+          <Card className="mb-6">
+            <Button
+              onClick={handleStartTunnel}
+              disabled={!selectedProvider?.installed}
+            >
+              <Globe className="h-4 w-4" />
+              Create Web Link
+              {selectedProvider && ` with ${selectedProvider.name}`}
+            </Button>
+          </Card>
+        </>
       )}
 
       {/* Tunnel in progress / active */}
@@ -185,16 +395,16 @@ export function CreateWebLink() {
         </Card>
       )}
 
-      {/* Temporary mode warning */}
+      {/* Provider-specific temporary mode warning */}
       {tunnelMode === "temporary" && isActive && (
         <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-4 mb-6">
           <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="text-sm text-amber-800">
             <p className="font-medium mb-1">This link is temporary</p>
-            <p>
-              It changes every time you restart this app. If it changes, you'll
-              need to update the redirect URLs in your social media developer
-              portals.
+            <p>{PROVIDER_WARNINGS[tunnelProvider]}</p>
+            <p className="mt-1">
+              If it changes, you'll need to update the redirect URLs in your
+              social media developer portals.
             </p>
           </div>
         </div>
@@ -344,7 +554,7 @@ export function CreateWebLink() {
               </>
             ) : (
               <>
-                <StatusIndicator status="success" label={statusMessage} />
+                <StatusIndicator status={domainReachable ? "success" : "warning"} label={statusMessage} />
                 {tunnelUrl && (
                   <CopyField value={tunnelUrl} label="Your domain" />
                 )}

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::State;
 
-use crate::state::{ResumeState, SharedState};
+use crate::state::{ResumeState, SharedState, TunnelProvider};
 
 fn default_resume_dir() -> PathBuf {
     dirs::data_local_dir()
@@ -86,8 +86,10 @@ pub fn load_resume_state(
             app_state.stale_providers.insert(p.clone());
         }
         app_state.tunnel_mode = resume.tunnel_mode.clone();
+        app_state.tunnel_provider = TunnelProvider::from_str_loose(&resume.tunnel_provider);
         app_state.permanent_domain = resume.permanent_domain.clone();
         app_state.reboot_pending = resume.reboot_pending_for.clone();
+        app_state.transfer_review_pending = resume.transfer_review_pending;
     }
 
     Ok(Some(resume))
@@ -113,6 +115,8 @@ pub fn save_resume_state(state: State<SharedState>) -> Result<String, String> {
         providers_configured: app_state.providers_configured.iter().cloned().collect(),
         providers_stale: app_state.stale_providers.iter().cloned().collect(),
         reboot_pending_for: app_state.reboot_pending.clone(),
+        transfer_review_pending: app_state.transfer_review_pending,
+        tunnel_provider: app_state.tunnel_provider.as_str().to_string(),
         last_updated: chrono::Utc::now().to_rfc3339(),
     };
 
@@ -152,11 +156,15 @@ pub fn update_step(step: usize, state: State<SharedState>) -> Result<(), String>
 pub fn sync_tunnel_config(
     tunnel_mode: String,
     permanent_domain: Option<String>,
+    tunnel_provider: Option<String>,
     state: State<SharedState>,
 ) -> Result<(), String> {
     let mut app_state = state.lock().map_err(|e| format!("State lock failed: {}", e))?;
     app_state.tunnel_mode = tunnel_mode;
     app_state.permanent_domain = permanent_domain;
+    if let Some(ref provider) = tunnel_provider {
+        app_state.tunnel_provider = TunnelProvider::from_str_loose(provider);
+    }
     Ok(())
 }
 

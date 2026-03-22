@@ -366,11 +366,22 @@ export function getProvider(id: string): ProviderDefinition | undefined {
   return providers.find((p) => p.id === id);
 }
 
+export function isEphemeralTunnelUrl(url: string): boolean {
+  return (
+    url.includes("trycloudflare.com") ||
+    url.includes("ngrok-free.app") ||
+    url.includes("ngrok.io") ||
+    url.includes(".zrok.io") ||
+    url.includes(".pinggy.link") ||
+    url.includes(".pinggy.io")
+  );
+}
+
 export function getCallbackUrl(
   provider: ProviderDefinition,
   baseUrl: string,
 ): string {
-  if (provider.requiresPermanentDomain && baseUrl.includes("trycloudflare.com")) {
+  if (provider.requiresPermanentDomain && isEphemeralTunnelUrl(baseUrl)) {
     return "(requires permanent domain)";
   }
   return provider.callbackUrlTemplate.replace("{baseUrl}", baseUrl);

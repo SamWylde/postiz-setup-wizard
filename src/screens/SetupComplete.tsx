@@ -1,8 +1,10 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useWizardStore } from "../store/wizardStore";
 import {
   getInstallSnapshot,
   exportDiagnostics,
+  clearTransferReview,
+  saveResumeState,
   type InstallSnapshot,
 } from "../lib/tauri";
 import { open } from "@tauri-apps/plugin-shell";
@@ -12,23 +14,35 @@ import { Button } from "../components/ui/Button";
 import { CopyField } from "../components/ui/CopyField";
 import { StatusIndicator } from "../components/ui/StatusIndicator";
 import { showToast } from "../components/ui/Toast";
+import { ExportCloneDialog } from "../components/ExportCloneDialog";
 import {
   ExternalLink,
   PartyPopper,
   ArrowRight,
   Download,
+  Archive,
 } from "lucide-react";
 
 export function SetupComplete() {
-  const { port, installPath, tunnelUrl, tunnelMode, providers, setStep } =
+  const { port, installPath, tunnelUrl, tunnelMode, permanentDomain, providers, setStep, transferReviewPending, setTransferReviewPending } =
     useWizardStore();
 
   const [snapshot, setSnapshot] = useState<InstallSnapshot | null>(null);
   const [checking, setChecking] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [showExport, setShowExport] = useState(false);
+
+  // Clear transfer review flag when reaching this screen and persist it
+  useEffect(() => {
+    if (transferReviewPending) {
+      clearTransferReview().catch(() => {});
+      setTransferReviewPending(false);
+      saveResumeState().catch(() => {});
+    }
+  }, [transferReviewPending, setTransferReviewPending]);
 
   const localUrl = `http://localhost:${port}`;
-  const publicUrl = tunnelUrl ?? null;
+  const publicUrl = tunnelUrl ?? (tunnelMode === "permanent" && permanentDomain ? permanentDomain : null);
 
   const configuredProviders = Object.entries(providers)
     .filter(([, s]) => s === "configured")
@@ -129,13 +143,19 @@ export function SetupComplete() {
             {tunnelMode !== "none" && (
               <StatusIndicator
                 status={
-                  snapshot.tunnel_alive ? "success" : "warning"
+                  snapshot.tunnel_alive
+                    ? "success"
+                    : tunnelMode === "permanent" && permanentDomain
+                      ? "success"
+                      : "warning"
                 }
                 label="Web link"
                 detail={
                   snapshot.tunnel_alive
                     ? snapshot.tunnel_url ?? "Active"
-                    : "Not connected"
+                    : tunnelMode === "permanent" && permanentDomain
+                      ? `Custom domain: ${permanentDomain}`
+                      : "Not connected"
                 }
               />
             )}
@@ -223,7 +243,20 @@ export function SetupComplete() {
           <Download className="h-4 w-4" />
           Export Diagnostics
         </Button>
+        <Button
+          variant="ghost"
+          onClick={() => setShowExport(!showExport)}
+        >
+          <Archive className="h-4 w-4" />
+          Export Full Backup
+        </Button>
       </div>
+
+      {showExport && (
+        <div className="mb-6">
+          <ExportCloneDialog onClose={() => setShowExport(false)} />
+        </div>
+      )}
 
       {/* Link to dashboard */}
       <div className="pt-4 border-t border-gray-200">

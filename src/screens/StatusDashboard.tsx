@@ -5,6 +5,7 @@ import {
   restartAndVerify,
   stopStack,
   reconnectTunnel,
+  saveResumeState,
   exportDiagnostics,
   checkForUpdate,
   installUpdate,
@@ -23,12 +24,14 @@ import { StatusIndicator } from "../components/ui/StatusIndicator";
 import { CollapsiblePanel } from "../components/ui/CollapsiblePanel";
 import { LogViewer } from "../components/ui/LogViewer";
 import { showToast } from "../components/ui/Toast";
+import { ExportCloneDialog } from "../components/ExportCloneDialog";
 import {
   ExternalLink,
   RefreshCw,
   Square,
   Globe,
   Download,
+  Archive,
   Activity,
   Server,
   Wifi,
@@ -41,7 +44,7 @@ import {
 const POLL_INTERVAL = 15_000;
 
 export function StatusDashboard() {
-  const { installPath, port, setStep } = useWizardStore();
+  const { installPath, port, tunnelProvider, permanentDomain, tunnelMode, setStep, setProviderStatus, providers } = useWizardStore();
 
   const [snapshot, setSnapshot] = useState<InstallSnapshot | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -50,6 +53,7 @@ export function StatusDashboard() {
   const [reconnecting, setReconnecting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
@@ -115,7 +119,8 @@ export function StatusDashboard() {
   };
 
   const handleOpenPostiz = async () => {
-    const url = snapshot?.tunnel_url ?? localUrl;
+    // Prefer live tunnel URL, then permanent domain, then localhost
+    const url = snapshot?.tunnel_url ?? (permanentDomain && tunnelMode === "permanent" ? permanentDomain : localUrl);
     try {
       await open(url);
     } catch (err) {
@@ -153,9 +158,27 @@ export function StatusDashboard() {
   const handleReconnectTunnel = async () => {
     setReconnecting(true);
     try {
-      const url = await reconnectTunnel(port, installPath);
+      const previousUrl = snapshot?.tunnel_url;
+      const url = await reconnectTunnel(port, installPath, tunnelProvider);
       await fetchSnapshot();
-      showToast(`Tunnel connected: ${url}`, "success");
+      // If the URL changed, mark all configured providers as stale
+      if (previousUrl && url !== previousUrl) {
+        const configured = Object.entries(providers)
+          .filter(([, s]) => s === "configured")
+          .map(([id]) => id);
+        for (const id of configured) {
+          setProviderStatus(id, "stale");
+        }
+        if (configured.length > 0) {
+          showToast(`Tunnel connected: ${url}. Provider redirect URLs need updating.`, "success");
+        } else {
+          showToast(`Tunnel connected: ${url}`, "success");
+        }
+      } else {
+        showToast(`Tunnel connected: ${url}`, "success");
+      }
+      // Persist the updated state
+      await saveResumeState().catch(() => {});
     } catch (err) {
       showToast(`Reconnect failed: ${String(err)}`, "error");
     } finally {
@@ -274,9 +297,11 @@ export function StatusDashboard() {
                 ? "loading"
                 : snapshot.tunnel_alive
                   ? "success"
-                  : snapshot.tunnel_mode === "none"
-                    ? "warning"
-                    : "error"
+                  : snapshot.tunnel_mode === "permanent" && snapshot.permanent_domain
+                    ? "success"
+                    : snapshot.tunnel_mode === "none"
+                      ? "warning"
+                      : "error"
             }
             label="Tunnel"
             detail={
@@ -284,9 +309,11 @@ export function StatusDashboard() {
                 ? "Checking..."
                 : snapshot.tunnel_alive
                   ? snapshot.tunnel_url ?? "Active"
-                  : snapshot.tunnel_mode === "none"
-                    ? "Not configured"
-                    : "Disconnected"
+                  : snapshot.tunnel_mode === "permanent" && snapshot.permanent_domain
+                    ? `Custom domain: ${snapshot.permanent_domain}`
+                    : snapshot.tunnel_mode === "none"
+                      ? "Not configured"
+                      : "Disconnected"
             }
           />
 
@@ -368,6 +395,9 @@ export function StatusDashboard() {
         <div className="space-y-3">
           {snapshot?.tunnel_alive && snapshot.tunnel_url && (
             <CopyField value={snapshot.tunnel_url} label="Public URL" />
+          )}
+          {!snapshot?.tunnel_alive && snapshot?.tunnel_mode === "permanent" && snapshot?.permanent_domain && (
+            <CopyField value={snapshot.permanent_domain} label="Custom Domain" />
           )}
           <CopyField value={localUrl} label="Local URL" />
 
@@ -453,7 +483,7 @@ export function StatusDashboard() {
           </div>
         )}
 
-        {snapshot?.tunnel_mode === "temporary" && (
+        {snapshot?.tunnel_mode === "temporary" && !snapshot?.tunnel_alive && (
           <Button
             variant="secondary"
             onClick={handleReconnectTunnel}
@@ -473,10 +503,24 @@ export function StatusDashboard() {
           Export Diagnostics
         </Button>
 
+        <Button
+          variant="secondary"
+          onClick={() => setShowExport(!showExport)}
+        >
+          <Archive className="h-4 w-4" />
+          Export Full Backup
+        </Button>
+
         <Button variant="ghost" onClick={handleMinimizeToTray}>
           Minimize to Tray
         </Button>
       </div>
+
+      {showExport && (
+        <div className="mb-6">
+          <ExportCloneDialog onClose={() => setShowExport(false)} />
+        </div>
+      )}
 
       {/* Docker logs */}
       <CollapsiblePanel title="Docker Logs">

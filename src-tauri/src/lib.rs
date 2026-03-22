@@ -57,7 +57,15 @@ pub fn run() {
                         "open_postiz" => {
                             let state: tauri::State<SharedState> = app.state();
                             let url = if let Ok(s) = state.lock() {
-                                s.tunnel_url.clone().or_else(|| s.local_url.clone())
+                                s.tunnel_url.clone()
+                                    .or_else(|| {
+                                        if s.tunnel_mode == "permanent" {
+                                            s.permanent_domain.clone()
+                                        } else {
+                                            None
+                                        }
+                                    })
+                                    .or_else(|| s.local_url.clone())
                             } else {
                                 None
                             };
@@ -68,7 +76,13 @@ pub fn run() {
                         "copy_link" => {
                             let state: tauri::State<SharedState> = app.state();
                             let url = if let Ok(s) = state.lock() {
-                                s.tunnel_url.clone()
+                                s.tunnel_url.clone().or_else(|| {
+                                    if s.tunnel_mode == "permanent" {
+                                        s.permanent_domain.clone()
+                                    } else {
+                                        None
+                                    }
+                                })
                             } else {
                                 None
                             };
@@ -232,6 +246,10 @@ pub fn run() {
             commands::updater::check_for_update,
             commands::updater::install_update,
             commands::updater::get_current_app_version,
+            commands::transfer::export_clone,
+            commands::transfer::validate_clone_file,
+            commands::transfer::import_clone,
+            commands::transfer::clear_transfer_review,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

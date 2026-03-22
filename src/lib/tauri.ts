@@ -15,6 +15,7 @@ export interface InstallSnapshot {
   tunnel_alive: boolean;
   tunnel_url: string | null;
   tunnel_mode: string;
+  tunnel_provider: string;
   permanent_domain: string | null;
   providers_configured: string[];
   providers_stale: string[];
@@ -36,7 +37,9 @@ export type BootstrapAction =
   | "InstallDocker"
   | "StartDocker"
   | "SwitchLinuxContainers"
-  | "InstallCloudflared";
+  | "InstallCloudflared"
+  | "InstallNgrok"
+  | "InstallZrok";
 
 export const runBootstrap = (action: BootstrapAction) =>
   invoke<string>("run_bootstrap", { action });
@@ -74,16 +77,18 @@ export const restartAndVerify = (path: string) =>
   invoke<string>("restart_and_verify", { path });
 
 // Tunnel commands
-export const startTunnel = (port: number) =>
-  invoke<string>("start_tunnel", { port });
+export type TunnelProvider = "cloudflared" | "ngrok" | "zrok" | "pinggy";
+
+export const startTunnel = (port: number, provider?: TunnelProvider, config?: string) =>
+  invoke<string>("start_tunnel", { port, provider, config });
 
 export const stopTunnel = () => invoke<string>("stop_tunnel");
 
 export const getTunnelStatus = () =>
   invoke<{ status: string; url: string | null }>("get_tunnel_status");
 
-export const reconnectTunnel = (port: number, installPath: string) =>
-  invoke<string>("reconnect_tunnel", { port, installPath });
+export const reconnectTunnel = (port: number, installPath: string, provider?: TunnelProvider, config?: string) =>
+  invoke<string>("reconnect_tunnel", { port, installPath, provider, config });
 
 // Env file commands
 export const stageProviderConfig = (
@@ -133,6 +138,8 @@ export const loadResumeState = (installPath?: string) =>
     providers_configured: string[];
     providers_stale: string[];
     reboot_pending_for: string | null;
+    transfer_review_pending: boolean;
+    tunnel_provider: string;
   } | null>("load_resume_state", { installPath });
 
 export const saveResumeState = () => invoke<string>("save_resume_state");
@@ -143,7 +150,8 @@ export const updateStep = (step: number) =>
 export const syncTunnelConfig = (
   tunnelMode: string,
   permanentDomain: string | null,
-) => invoke<void>("sync_tunnel_config", { tunnelMode, permanentDomain });
+  tunnelProvider?: string,
+) => invoke<void>("sync_tunnel_config", { tunnelMode, permanentDomain, tunnelProvider });
 
 export const syncProviderStatus = (
   configured: string[],
@@ -173,6 +181,46 @@ export const installUpdate = () =>
 
 export const getCurrentAppVersion = () =>
   invoke<string>("get_current_app_version");
+
+// Transfer commands
+export interface CloneManifest {
+  format_version: number;
+  created_at: string;
+  source_hostname: string;
+  source_port: number;
+  wizard_version: string;
+  tunnel_mode: string;
+  tunnel_provider: string;
+  providers_configured: string[];
+  volumes: { archive_name: string; mount_path: string; service: string }[];
+}
+
+export interface TransferProgress {
+  phase: string;
+  message: string;
+  current: number | null;
+  total: number | null;
+}
+
+export const exportClone = (path: string, password: string, outputPath: string) =>
+  invoke<string>("export_clone", { path, password, outputPath });
+
+export const validateCloneFile = (clonePath: string, password: string) =>
+  invoke<CloneManifest>("validate_clone_file", { clonePath, password });
+
+export const importClone = (
+  clonePath: string,
+  password: string,
+  installPath: string,
+  customPort?: number,
+) => invoke<string>("import_clone", { clonePath, password, installPath, customPort });
+
+export const clearTransferReview = () =>
+  invoke<void>("clear_transfer_review");
+
+export const onTransferProgress = (
+  callback: (event: { payload: TransferProgress }) => void,
+): Promise<UnlistenFn> => listen("transfer-progress", callback);
 
 // Event listeners
 export const onDockerProgress = (

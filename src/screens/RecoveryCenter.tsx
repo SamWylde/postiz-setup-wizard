@@ -3,6 +3,7 @@ import {
   getInstallSnapshot,
   restartAndVerify,
   reconnectTunnel,
+  saveResumeState,
   stopStack,
   cleanStagedFiles,
   type InstallSnapshot,
@@ -32,7 +33,7 @@ export function RecoveryCenter({
   snapshot: initialSnapshot,
   onResumeWizard,
 }: RecoveryCenterProps) {
-  const { setStep } = useWizardStore();
+  const { setStep, tunnelProvider } = useWizardStore();
   const [snapshot, setSnapshot] = useState<InstallSnapshot>(initialSnapshot);
   const [repairing, setRepairing] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
@@ -40,6 +41,7 @@ export function RecoveryCenter({
   const [showCleanConfirm, setShowCleanConfirm] = useState(false);
   const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const displayedStep = Math.min(snapshot.current_step, 5) + 1;
 
   const installPath = snapshot.install_path ?? "";
 
@@ -73,8 +75,9 @@ export function RecoveryCenter({
   const handleReconnectTunnel = async () => {
     setReconnecting(true);
     try {
-      const url = await reconnectTunnel(snapshot.port, installPath);
+      const url = await reconnectTunnel(snapshot.port, installPath, tunnelProvider);
       await refreshSnapshot();
+      await saveResumeState().catch(() => {});
       showToast(`Tunnel connected: ${url}`, "success");
     } catch (err) {
       showToast(`Reconnect failed: ${String(err)}`, "error");
@@ -165,17 +168,21 @@ export function RecoveryCenter({
             status={
               snapshot.tunnel_alive
                 ? "success"
-                : snapshot.tunnel_mode === "none"
-                  ? "warning"
-                  : "error"
+                : snapshot.tunnel_mode === "permanent" && snapshot.permanent_domain
+                  ? "success"
+                  : snapshot.tunnel_mode === "none"
+                    ? "warning"
+                    : "error"
             }
             label="Tunnel"
             detail={
               snapshot.tunnel_alive
                 ? snapshot.tunnel_url ?? "Active"
-                : snapshot.tunnel_mode === "none"
-                  ? "Not configured"
-                  : "Disconnected"
+                : snapshot.tunnel_mode === "permanent" && snapshot.permanent_domain
+                  ? `Custom domain: ${snapshot.permanent_domain}`
+                  : snapshot.tunnel_mode === "none"
+                    ? "Not configured"
+                    : "Disconnected"
             }
           />
         </div>
@@ -198,7 +205,7 @@ export function RecoveryCenter({
               Continue Setup
             </h4>
             <p className="text-xs text-gray-500 mt-0.5">
-              Pick up where you left off (step {snapshot.current_step} of 5)
+              Pick up where you left off (step {displayedStep} of 6)
             </p>
           </div>
         </div>

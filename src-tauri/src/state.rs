@@ -4,6 +4,41 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 use tokio::process::Child;
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum TunnelProvider {
+    Cloudflared,
+    Ngrok,
+    Zrok,
+    Pinggy,
+}
+
+impl Default for TunnelProvider {
+    fn default() -> Self {
+        Self::Cloudflared
+    }
+}
+
+impl TunnelProvider {
+    pub fn from_str_loose(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "ngrok" => Self::Ngrok,
+            "zrok" => Self::Zrok,
+            "pinggy" => Self::Pinggy,
+            _ => Self::Cloudflared,
+        }
+    }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Cloudflared => "cloudflared",
+            Self::Ngrok => "ngrok",
+            Self::Zrok => "zrok",
+            Self::Pinggy => "pinggy",
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ResumeState {
     pub version: u32,
@@ -16,6 +51,10 @@ pub struct ResumeState {
     pub providers_configured: Vec<String>,
     pub providers_stale: Vec<String>,
     pub reboot_pending_for: Option<String>,
+    #[serde(default)]
+    pub transfer_review_pending: bool,
+    #[serde(default)]
+    pub tunnel_provider: String,
     pub last_updated: String,
 }
 
@@ -32,6 +71,8 @@ impl Default for ResumeState {
             providers_configured: Vec::new(),
             providers_stale: Vec::new(),
             reboot_pending_for: None,
+            transfer_review_pending: false,
+            tunnel_provider: String::new(),
             last_updated: String::new(),
         }
     }
@@ -57,6 +98,7 @@ pub struct InstallSnapshot {
     pub tunnel_alive: bool,
     pub tunnel_url: Option<String>,
     pub tunnel_mode: String,
+    pub tunnel_provider: String,
     pub permanent_domain: Option<String>,
 
     // Providers
@@ -91,6 +133,7 @@ pub struct AppState {
     pub tunnel_url: Option<String>,
     pub tunnel_process: Option<Child>,
     pub tunnel_mode: String, // "temporary", "permanent", "none"
+    pub tunnel_provider: TunnelProvider,
     pub permanent_domain: Option<String>,
     pub current_step: usize,
     pub pending_env_changes: HashMap<String, String>,
@@ -102,6 +145,7 @@ pub struct AppState {
     pub tunnel_pid: Option<u32>,
     pub last_error: Option<String>,
     pub has_shown_tray_notification: bool,
+    pub transfer_review_pending: bool,
 }
 
 impl Default for AppState {
@@ -113,6 +157,7 @@ impl Default for AppState {
             tunnel_url: None,
             tunnel_process: None,
             tunnel_mode: "none".to_string(),
+            tunnel_provider: TunnelProvider::default(),
             permanent_domain: None,
             current_step: 0,
             pending_env_changes: HashMap::new(),
@@ -124,6 +169,7 @@ impl Default for AppState {
             tunnel_pid: None,
             last_error: None,
             has_shown_tray_notification: false,
+            transfer_review_pending: false,
         }
     }
 }

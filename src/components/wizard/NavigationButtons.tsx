@@ -49,6 +49,9 @@ export function NavigationButtons({
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
 
+      // Don't capture keys when a modal/dialog overlay is open
+      if (document.querySelector("[role='dialog'], .fixed.inset-0.z-50")) return;
+
       if (e.key === "Enter" && canProceedRef.current && !loadingRef.current) {
         e.preventDefault();
         handleNext();

@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { useWizardStore } from "../../store/wizardStore";
+import { getCurrentAppVersion } from "../../lib/tauri";
 import { StepIndicator } from "./StepIndicator";
 
 const steps = [
@@ -17,6 +19,13 @@ interface WizardLayoutProps {
 export function WizardLayout({ children }: WizardLayoutProps) {
   const currentStep = useWizardStore((s) => s.currentStep);
   const setStep = useWizardStore((s) => s.setStep);
+  const [appVersion, setAppVersion] = useState("v0.1.0");
+
+  useEffect(() => {
+    getCurrentAppVersion()
+      .then((v) => setAppVersion(`v${v}`))
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="flex h-screen">
@@ -49,7 +58,7 @@ export function WizardLayout({ children }: WizardLayoutProps) {
         </nav>
 
         <div className="pt-4 border-t border-gray-200">
-          <p className="text-xs text-gray-400">v0.1.0</p>
+          <p className="text-xs text-gray-400">{appVersion}</p>
         </div>
       </div>
 

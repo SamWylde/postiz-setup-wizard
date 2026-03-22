@@ -16,6 +16,7 @@ pub async fn get_install_snapshot(
         current_step,
         last_error,
         tunnel_mode,
+        tunnel_provider,
         permanent_domain,
         tunnel_pid,
         providers_configured,
@@ -30,6 +31,7 @@ pub async fn get_install_snapshot(
             s.current_step,
             s.last_error.clone(),
             s.tunnel_mode.clone(),
+            s.tunnel_provider.as_str().to_string(),
             s.permanent_domain.clone(),
             s.tunnel_pid,
             s.providers_configured.iter().cloned().collect::<Vec<_>>(),
@@ -37,18 +39,65 @@ pub async fn get_install_snapshot(
         )
     };
 
-    // If state has no install_path, probe the default location on disk
+    // If state has no install_path, probe the default location and pointer file
     // so we can discover installs even if resume state was lost
+    let discovered_from_disk = install_path.is_none();
     let install_path = install_path.or_else(|| {
         let default_path = dirs::data_local_dir()?.join("Postiz");
         if default_path.join("docker-compose.yml").exists()
             && default_path.join("postiz.env").exists()
         {
-            Some(default_path)
+            return Some(default_path);
+        }
+        // Check pointer file for custom install path
+        let pointer_path = dirs::data_local_dir()?.join("Postiz").join("install-pointer.json");
+        let contents = std::fs::read_to_string(&pointer_path).ok()?;
+        let val: serde_json::Value = serde_json::from_str(&contents).ok()?;
+        let custom_path = val["install_path"].as_str()?;
+        let custom = std::path::PathBuf::from(custom_path);
+        if custom.join("docker-compose.yml").exists() && custom.join("postiz.env").exists() {
+            Some(custom)
         } else {
             None
         }
     });
+
+    // When we discovered an install from disk (no resume state loaded), read
+    // metadata from postiz.env so the snapshot reflects actual configuration
+    // instead of in-memory defaults.
+    let (port, tunnel_mode, permanent_domain, providers_configured, current_step) =
+        if discovered_from_disk {
+            if let Some(ref p) = install_path {
+                let env_info = read_env_metadata(p);
+                let inferred_port = env_info.port.unwrap_or(port);
+                let inferred_tunnel_mode = env_info.tunnel_mode.unwrap_or(tunnel_mode);
+                let inferred_permanent_domain = env_info.permanent_domain.or(permanent_domain);
+                let inferred_providers = if env_info.providers.is_empty() {
+                    providers_configured
+                } else {
+                    env_info.providers
+                };
+                // Infer how far the user got using only configuration found on
+                // disk. A public URL proves the web-link step was completed,
+                // but a default in-memory "none" tunnel mode should not be
+                // treated as proof that the user explicitly chose local-only.
+                let inferred_step = infer_discovered_step(
+                    &inferred_providers,
+                    env_info.public_url_configured || inferred_permanent_domain.is_some(),
+                );
+                (
+                    inferred_port,
+                    inferred_tunnel_mode,
+                    inferred_permanent_domain,
+                    inferred_providers,
+                    inferred_step,
+                )
+            } else {
+                (port, tunnel_mode, permanent_domain, providers_configured, current_step)
+            }
+        } else {
+            (port, tunnel_mode, permanent_domain, providers_configured, current_step)
+        };
 
     let install_path_str = install_path
         .as_ref()
@@ -171,6 +220,7 @@ pub async fn get_install_snapshot(
         tunnel_alive,
         tunnel_url,
         tunnel_mode,
+        tunnel_provider,
         permanent_domain,
         providers_configured,
         providers_stale,
@@ -346,20 +396,26 @@ pub async fn validate_preflight(
         },
     });
 
-    // 9. cloudflared check (only for temporary tunnel mode)
+    // 9. Tunnel provider check (only for temporary tunnel mode)
     if tunnel_mode == "temporary" {
         let cf_installed = Command::new("cloudflared")
             .arg("--version")
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
+        let ngrok_installed = crate::commands::bootstrap::resolve_binary("ngrok") != "ngrok"
+            || Command::new("ngrok").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
+        let zrok_installed = crate::commands::bootstrap::resolve_binary("zrok") != "zrok"
+            || Command::new("zrok").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
+        let ssh_available = Command::new("ssh").arg("-V").output().is_ok();
+        let any_provider = cf_installed || ngrok_installed || zrok_installed || ssh_available;
         checks.push(PreflightCheck {
-            name: "cloudflared installed".to_string(),
-            passed: cf_installed,
-            message: if cf_installed {
-                "cloudflared is installed.".to_string()
+            name: "Tunnel provider available".to_string(),
+            passed: any_provider,
+            message: if any_provider {
+                "At least one tunnel provider is available.".to_string()
             } else {
-                "cloudflared is not installed. It is required for temporary tunnel mode.".to_string()
+                "No tunnel provider found. Install cloudflared, ngrok, or zrok, or ensure SSH is available for Pinggy.".to_string()
             },
         });
     }
@@ -402,4 +458,190 @@ fn check_available_ram(required_bytes: u64) -> bool {
     sys.refresh_memory();
 
     sys.available_memory() >= required_bytes
+}
+
+/// Metadata extracted from a postiz.env file on disk.
+struct EnvMetadata {
+    port: Option<u16>,
+    tunnel_mode: Option<String>,
+    permanent_domain: Option<String>,
+    providers: Vec<String>,
+    public_url_configured: bool,
+}
+
+fn infer_discovered_step(providers: &[String], public_url_configured: bool) -> usize {
+    if !providers.is_empty() {
+        5
+    } else if public_url_configured {
+        4
+    } else {
+        2
+    }
+}
+
+/// Read metadata from a postiz.env file so disk-discovered installs
+/// have accurate port, tunnel mode, domain, and provider information.
+fn read_env_metadata(install_path: &std::path::Path) -> EnvMetadata {
+    let env_path = install_path.join("postiz.env");
+    let contents = match std::fs::read_to_string(&env_path) {
+        Ok(c) => c,
+        Err(_) => {
+            return EnvMetadata {
+                port: None,
+                tunnel_mode: None,
+                permanent_domain: None,
+                providers: Vec::new(),
+                public_url_configured: false,
+            }
+        }
+    };
+
+    let mut port: Option<u16> = None;
+    let mut main_url: Option<String> = None;
+    let mut env_map: Vec<(String, String)> = Vec::new();
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(eq_pos) = trimmed.find('=') {
+            let key = trimmed[..eq_pos].trim().to_string();
+            let value = trimmed[eq_pos + 1..].trim().to_string();
+            if key == "MAIN_URL" {
+                main_url = Some(value.clone());
+                // Extract port from URL
+                let without_scheme = value
+                    .strip_prefix("https://")
+                    .or_else(|| value.strip_prefix("http://"))
+                    .unwrap_or(&value);
+                let host_port = without_scheme.split('/').next().unwrap_or(without_scheme);
+                let parts: Vec<&str> = host_port.split(':').collect();
+                if parts.len() == 2 {
+                    port = parts[1].parse::<u16>().ok();
+                }
+            }
+            env_map.push((key, value));
+        }
+    }
+
+    // Infer tunnel mode from MAIN_URL:
+    // - A known ephemeral tunnel domain means the user completed the
+    //   temporary-link step, even if the process is no longer running.
+    // - Any other non-localhost HTTPS URL is treated as a permanent domain.
+    let (tunnel_mode, permanent_domain, public_url_configured) = if let Some(ref url) = main_url {
+        let is_ephemeral = url.contains("trycloudflare.com")
+            || url.contains("ngrok-free.app")
+            || url.contains("ngrok.io")
+            || url.contains(".zrok.io")
+            || url.contains(".pinggy.link")
+            || url.contains(".pinggy.io");
+        let is_public_https = url.starts_with("https://") && !url.contains("localhost");
+        if is_public_https && is_ephemeral {
+            (Some("temporary".to_string()), None, true)
+        } else if is_public_https {
+            (Some("permanent".to_string()), Some(url.clone()), true)
+        } else {
+            (None, None, false)
+        }
+    } else {
+        (None, None, false)
+    };
+
+    // Detect configured providers (same keys as import.rs)
+    let provider_keys: &[(&str, &str)] = &[
+        ("X_API_KEY", "x"),
+        ("FACEBOOK_APP_ID", "facebook"),
+        ("LINKEDIN_CLIENT_ID", "linkedin"),
+        ("REDDIT_CLIENT_ID", "reddit"),
+        ("THREADS_APP_ID", "threads"),
+        ("YOUTUBE_CLIENT_ID", "youtube"),
+        ("TIKTOK_CLIENT_ID", "tiktok"),
+        ("PINTEREST_CLIENT_ID", "pinterest"),
+        ("DISCORD_CLIENT_ID", "discord"),
+        ("SLACK_ID", "slack"),
+        ("MASTODON_CLIENT_ID", "mastodon"),
+        ("DRIBBBLE_CLIENT_ID", "dribbble"),
+    ];
+
+    let mut providers = Vec::new();
+    for (env_key, provider_name) in provider_keys {
+        for (key, value) in &env_map {
+            if key == *env_key && !value.is_empty() {
+                providers.push(provider_name.to_string());
+                break;
+            }
+        }
+    }
+
+    EnvMetadata {
+        port,
+        tunnel_mode,
+        permanent_domain,
+        providers,
+        public_url_configured,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{infer_discovered_step, read_env_metadata};
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn make_temp_install_dir() -> PathBuf {
+        let unique = format!(
+            "postiz-snapshot-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system clock should be after unix epoch")
+                .as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&dir).expect("temp install dir should be created");
+        dir
+    }
+
+    #[test]
+    fn infer_discovered_step_only_advances_for_real_public_url_or_providers() {
+        assert_eq!(infer_discovered_step(&[], false), 2);
+        assert_eq!(infer_discovered_step(&[], true), 4);
+        assert_eq!(infer_discovered_step(&["x".to_string()], false), 5);
+    }
+
+    #[test]
+    fn read_env_metadata_marks_ephemeral_urls_as_temporary() {
+        let dir = make_temp_install_dir();
+        fs::write(
+            dir.join("postiz.env"),
+            "MAIN_URL=https://example.trycloudflare.com\nX_API_KEY=test\n",
+        )
+        .expect("postiz.env should be written");
+
+        let env = read_env_metadata(&dir);
+
+        assert_eq!(env.tunnel_mode.as_deref(), Some("temporary"));
+        assert_eq!(env.permanent_domain, None);
+        assert!(env.public_url_configured);
+        assert_eq!(env.providers, vec!["x".to_string()]);
+
+        fs::remove_dir_all(&dir).expect("temp install dir should be removed");
+    }
+
+    #[test]
+    fn read_env_metadata_keeps_localhost_out_of_public_url_inference() {
+        let dir = make_temp_install_dir();
+        fs::write(dir.join("postiz.env"), "MAIN_URL=http://localhost:4007\n")
+            .expect("postiz.env should be written");
+
+        let env = read_env_metadata(&dir);
+
+        assert_eq!(env.tunnel_mode, None);
+        assert_eq!(env.permanent_domain, None);
+        assert!(!env.public_url_configured);
+
+        fs::remove_dir_all(&dir).expect("temp install dir should be removed");
+    }
 }

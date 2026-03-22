@@ -62,6 +62,8 @@ pub async fn import_existing_install(
     }
 
     // 4. Detect configured providers
+    // Note: Instagram uses the same Facebook App keys (FACEBOOK_APP_ID/SECRET),
+    // so we don't detect it separately — it's implicitly available when Facebook is configured.
     let provider_keys: &[(&str, &str)] = &[
         ("X_API_KEY", "x"),
         ("FACEBOOK_APP_ID", "facebook"),
@@ -75,7 +77,6 @@ pub async fn import_existing_install(
         ("SLACK_ID", "slack"),
         ("MASTODON_CLIENT_ID", "mastodon"),
         ("DRIBBBLE_CLIENT_ID", "dribbble"),
-        ("INSTAGRAM_APP_ID", "instagram"),
     ];
 
     let mut providers_configured: HashSet<String> = HashSet::new();

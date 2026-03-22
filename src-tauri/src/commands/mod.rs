@@ -7,5 +7,6 @@ pub mod install;
 pub mod resume;
 pub mod secrets;
 pub mod snapshot;
+pub mod transfer;
 pub mod tunnel;
 pub mod updater;

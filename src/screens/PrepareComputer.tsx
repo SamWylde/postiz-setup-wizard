@@ -143,17 +143,21 @@ export function PrepareComputer() {
               />
               <StatusIndicator
                 status={
-                  machineState.cloudflared_installed
+                  (machineState.cloudflared_installed || machineState.ngrok_installed ||
+                   machineState.zrok_installed || machineState.ssh_available)
                     ? "success"
                     : bootstrapStatus === "checking"
                       ? "loading"
                       : "warning"
                 }
-                label="Web link tool (optional)"
+                label="Tunnel provider (optional)"
                 detail={
-                  machineState.cloudflared_installed
-                    ? "Ready"
-                    : "Not installed — needed only for temporary web links"
+                  [
+                    machineState.cloudflared_installed && "cloudflared",
+                    machineState.ngrok_installed && "ngrok",
+                    machineState.zrok_installed && "zrok",
+                    machineState.ssh_available && "SSH/Pinggy",
+                  ].filter(Boolean).join(", ") || "None installed — needed for web links"
                 }
               />
               <StatusIndicator

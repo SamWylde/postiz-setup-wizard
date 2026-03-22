@@ -9,10 +9,10 @@
 ## Features
 
 ### Guided Setup (6 steps, ~10 minutes)
-1. **Prepare Computer** — Automatically detects and installs prerequisites (WSL2, Docker Desktop, Cloudflare Tunnel)
+1. **Prepare Computer** — Automatically detects and installs prerequisites (WSL2, Docker Desktop, tunnel providers)
 2. **Install Postiz** — Choose install location, auto-generates secrets, pulls Docker images, starts all services
 3. **Create Account** — Waits for Postiz to come online, then walks you through first account creation
-4. **Create Web Link** — Sets up a Cloudflare Quick Tunnel so you have a public HTTPS URL (required for OAuth callbacks)
+4. **Create Web Link** — Sets up a public HTTPS URL via your choice of tunnel provider (required for OAuth callbacks). Supports **Cloudflare**, **ngrok**, **zrok**, and **Pinggy**
 5. **Connect Platforms** — Step-by-step guides for each social platform, with pre-filled callback URLs you can copy with one click
 6. **Verify & Finish** — Runs health checks and confirms everything is working
 
@@ -75,7 +75,7 @@ src-tauri/              # Rust backend
 
 - **Desktop:** Tauri 2 (Rust + system WebView)
 - **Frontend:** React 19, TypeScript, Tailwind CSS v4, Zustand
-- **Infrastructure:** Docker Compose, cloudflared
+- **Infrastructure:** Docker Compose, cloudflared / ngrok / zrok / Pinggy
 
 ### Releasing
 

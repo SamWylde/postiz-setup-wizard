@@ -13,6 +13,9 @@ pub struct MachineState {
     pub docker_running: bool,
     pub docker_linux_mode: bool,
     pub cloudflared_installed: bool,
+    pub ngrok_installed: bool,
+    pub zrok_installed: bool,
+    pub ssh_available: bool,
     pub disk_space_gb: f64,
     pub ram_available_gb: f64,
     pub existing_install: Option<String>,
@@ -21,6 +24,25 @@ pub struct MachineState {
 
 fn check_command(cmd: &str, args: &[&str]) -> bool {
     Command::new(cmd).args(args).output().is_ok()
+}
+
+/// Resolve a binary by checking PostizWizard local install first, then system PATH.
+pub fn resolve_binary(name: &str) -> String {
+    let local = dirs::data_local_dir()
+        .unwrap_or_default()
+        .join("PostizWizard")
+        .join(name)
+        .join(format!("{}.exe", name));
+    if local.exists() {
+        local.to_string_lossy().to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+fn check_binary_available(name: &str, args: &[&str]) -> bool {
+    let binary = resolve_binary(name);
+    Command::new(&binary).args(args).output().is_ok()
 }
 
 fn get_command_output(cmd: &str, args: &[&str]) -> Option<String> {
@@ -59,8 +81,11 @@ pub fn scan_machine(state: State<SharedState>) -> Result<MachineState, String> {
         false
     };
 
-    // Check cloudflared
+    // Check tunnel providers
     let cloudflared_installed = check_command("cloudflared", &["--version"]);
+    let ngrok_installed = check_binary_available("ngrok", &["version"]);
+    let zrok_installed = check_binary_available("zrok", &["version"]);
+    let ssh_available = check_command("ssh", &["-V"]);
 
     // Check disk space
     let disks = Disks::new_with_refreshed_list();
@@ -123,6 +148,9 @@ pub fn scan_machine(state: State<SharedState>) -> Result<MachineState, String> {
         docker_running,
         docker_linux_mode,
         cloudflared_installed,
+        ngrok_installed,
+        zrok_installed,
+        ssh_available,
         disk_space_gb,
         ram_available_gb,
         existing_install,
@@ -137,6 +165,8 @@ pub enum BootstrapAction {
     StartDocker,
     SwitchLinuxContainers,
     InstallCloudflared,
+    InstallNgrok,
+    InstallZrok,
 }
 
 #[tauri::command]
@@ -230,6 +260,139 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 Err(format!("Installation failed: {} {}", stdout, stderr))
+            }
+        }
+        BootstrapAction::InstallNgrok => {
+            let install_dir = dirs::data_local_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("PostizWizard")
+                .join("ngrok");
+            std::fs::create_dir_all(&install_dir)
+                .map_err(|e| format!("Failed to create ngrok directory: {}", e))?;
+
+            let zip_path = std::env::temp_dir().join("ngrok.zip");
+            let download_url = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip";
+
+            // Download
+            let output = Command::new("powershell")
+                .args([
+                    "-Command",
+                    &format!(
+                        "Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
+                        download_url,
+                        zip_path.display()
+                    ),
+                ])
+                .output()
+                .map_err(|e| format!("Failed to download ngrok: {}", e))?;
+
+            if !output.status.success() {
+                return Err(format!(
+                    "Download failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+
+            // Extract
+            let output = Command::new("powershell")
+                .args([
+                    "-Command",
+                    &format!(
+                        "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                        zip_path.display(),
+                        install_dir.display()
+                    ),
+                ])
+                .output()
+                .map_err(|e| format!("Failed to extract ngrok: {}", e))?;
+
+            let _ = std::fs::remove_file(&zip_path);
+
+            if output.status.success() && install_dir.join("ngrok.exe").exists() {
+                Ok("ngrok installed successfully.".to_string())
+            } else {
+                Err(format!(
+                    "Extraction failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+            }
+        }
+        BootstrapAction::InstallZrok => {
+            let install_dir = dirs::data_local_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("PostizWizard")
+                .join("zrok");
+            std::fs::create_dir_all(&install_dir)
+                .map_err(|e| format!("Failed to create zrok directory: {}", e))?;
+
+            let zip_path = std::env::temp_dir().join("zrok.zip");
+
+            // Fetch latest release URL from GitHub API
+            let release_output = Command::new("powershell")
+                .args([
+                    "-Command",
+                    "Invoke-RestMethod -Uri 'https://api.github.com/repos/openziti/zrok/releases/latest' -UseBasicParsing | ConvertTo-Json -Depth 10",
+                ])
+                .output()
+                .map_err(|e| format!("Failed to query zrok releases: {}", e))?;
+
+            if !release_output.status.success() {
+                return Err("Failed to query GitHub for zrok releases.".to_string());
+            }
+
+            let release_json = String::from_utf8_lossy(&release_output.stdout);
+            let download_url = release_json
+                .lines()
+                .find(|l| l.contains("browser_download_url") && l.contains("windows") && l.contains("amd64") && l.contains(".zip"))
+                .and_then(|l| {
+                    l.split('"')
+                        .find(|s| s.starts_with("https://"))
+                })
+                .ok_or_else(|| "Could not find zrok Windows amd64 release asset.".to_string())?
+                .to_string();
+
+            // Download
+            let output = Command::new("powershell")
+                .args([
+                    "-Command",
+                    &format!(
+                        "Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
+                        download_url,
+                        zip_path.display()
+                    ),
+                ])
+                .output()
+                .map_err(|e| format!("Failed to download zrok: {}", e))?;
+
+            if !output.status.success() {
+                return Err(format!(
+                    "Download failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+
+            // Extract
+            let output = Command::new("powershell")
+                .args([
+                    "-Command",
+                    &format!(
+                        "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                        zip_path.display(),
+                        install_dir.display()
+                    ),
+                ])
+                .output()
+                .map_err(|e| format!("Failed to extract zrok: {}", e))?;
+
+            let _ = std::fs::remove_file(&zip_path);
+
+            if output.status.success() && install_dir.join("zrok.exe").exists() {
+                Ok("zrok installed successfully.".to_string())
+            } else {
+                Err(format!(
+                    "Extraction failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ))
             }
         }
     }

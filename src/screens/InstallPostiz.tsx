@@ -23,6 +23,7 @@ import { StatusIndicator } from "../components/ui/StatusIndicator";
 import { CollapsiblePanel } from "../components/ui/CollapsiblePanel";
 import { LogViewer } from "../components/ui/LogViewer";
 import { NavigationButtons } from "../components/wizard/NavigationButtons";
+import { ImportClonePanel } from "../components/ImportClonePanel";
 
 function formatElapsed(seconds: number): string {
   const m = Math.floor(seconds / 60);
@@ -50,6 +51,7 @@ export function InstallPostiz() {
 
   const [statusMessage, setStatusMessage] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isInstalling = ["preparing", "pulling", "starting"].includes(
@@ -179,6 +181,22 @@ export function InstallPostiz() {
     setStatusMessage("");
   };
 
+  if (showImport) {
+    return (
+      <div className="max-w-2xl">
+        <h2 className="text-2xl font-semibold text-gray-900 mb-2">
+          Install Postiz
+        </h2>
+        <p className="text-gray-600 mb-6">
+          Restore from a backup created on another machine.
+        </p>
+        <Card className="mb-6">
+          <ImportClonePanel onCancel={() => setShowImport(false)} />
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-2xl">
       <h2 className="text-2xl font-semibold text-gray-900 mb-2">
@@ -257,13 +275,21 @@ export function InstallPostiz() {
               </div>
             )}
 
-            <div className="mt-4">
+            <div className="mt-4 space-y-2">
               <Button
                 onClick={handleInstall}
                 disabled={showAdvanced && (port < 1024 || port > 65535)}
               >
                 Install Postiz
               </Button>
+              <div>
+                <button
+                  onClick={() => setShowImport(true)}
+                  className="text-sm text-blue-600 hover:text-blue-700"
+                >
+                  Or import from a backup
+                </button>
+              </div>
             </div>
           </>
         ) : (

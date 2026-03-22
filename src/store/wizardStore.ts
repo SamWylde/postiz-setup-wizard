@@ -8,6 +8,9 @@ export interface MachineState {
   docker_running: boolean;
   docker_linux_mode: boolean;
   cloudflared_installed: boolean;
+  ngrok_installed: boolean;
+  zrok_installed: boolean;
+  ssh_available: boolean;
   disk_space_gb: number;
   ram_available_gb: number;
   existing_install: string | null;
@@ -61,6 +64,7 @@ export interface WizardState {
   tunnelStatus: "idle" | "starting" | "running" | "restarting" | "error";
   tunnelUrl: string | null;
   tunnelMode: "temporary" | "permanent" | "none";
+  tunnelProvider: "cloudflared" | "ngrok" | "zrok" | "pinggy";
   permanentDomain: string;
   remoteReachable: boolean;
 
@@ -70,6 +74,9 @@ export interface WizardState {
 
   // Step 5: Verify & Finish
   verified: boolean;
+
+  // Transfer
+  transferReviewPending: boolean;
 
   // Docker logs (for technical details panel)
   dockerLogs: string[];
@@ -87,11 +94,13 @@ export interface WizardState {
   setTunnelStatus: (status: WizardState["tunnelStatus"]) => void;
   setTunnelUrl: (url: string | null) => void;
   setTunnelMode: (mode: WizardState["tunnelMode"]) => void;
+  setTunnelProvider: (provider: WizardState["tunnelProvider"]) => void;
   setPermanentDomain: (domain: string) => void;
   setRemoteReachable: (reachable: boolean) => void;
   setProviderStatus: (provider: string, status: ProviderStatus) => void;
   setActiveProvider: (provider: string | null) => void;
   setVerified: (verified: boolean) => void;
+  setTransferReviewPending: (pending: boolean) => void;
   addDockerLog: (log: string) => void;
   clearDockerLogs: () => void;
 }
@@ -112,7 +121,8 @@ export const useWizardStore = create<WizardState>((set) => ({
 
   tunnelStatus: "idle",
   tunnelUrl: null,
-  tunnelMode: "none",
+  tunnelMode: "temporary",
+  tunnelProvider: "cloudflared",
   permanentDomain: "",
   remoteReachable: false,
 
@@ -120,6 +130,8 @@ export const useWizardStore = create<WizardState>((set) => ({
   activeProvider: null,
 
   verified: false,
+
+  transferReviewPending: false,
 
   dockerLogs: [],
 
@@ -141,15 +153,23 @@ export const useWizardStore = create<WizardState>((set) => ({
   setTunnelUrl: (tunnelUrl) => set({ tunnelUrl }),
   setTunnelMode: (tunnelMode) => {
     set((state) => {
-      syncTunnelConfig(tunnelMode, state.permanentDomain || null)
+      syncTunnelConfig(tunnelMode, state.permanentDomain || null, state.tunnelProvider)
         .then(() => saveResumeState())
         .catch(() => {});
       return { tunnelMode };
     });
   },
+  setTunnelProvider: (tunnelProvider) => {
+    set((state) => {
+      syncTunnelConfig(state.tunnelMode, state.permanentDomain || null, tunnelProvider)
+        .then(() => saveResumeState())
+        .catch(() => {});
+      return { tunnelProvider };
+    });
+  },
   setPermanentDomain: (permanentDomain) => {
     set((state) => {
-      syncTunnelConfig(state.tunnelMode, permanentDomain || null)
+      syncTunnelConfig(state.tunnelMode, permanentDomain || null, state.tunnelProvider)
         .then(() => saveResumeState())
         .catch(() => {});
       return { permanentDomain };
@@ -174,6 +194,7 @@ export const useWizardStore = create<WizardState>((set) => ({
   },
   setActiveProvider: (activeProvider) => set({ activeProvider }),
   setVerified: (verified) => set({ verified }),
+  setTransferReviewPending: (transferReviewPending) => set({ transferReviewPending }),
   addDockerLog: (log) =>
     set((state) => ({
       dockerLogs: [...state.dockerLogs.slice(-499), log],
