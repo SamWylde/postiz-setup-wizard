@@ -2,7 +2,7 @@
 
 [Postiz](https://postiz.com) is an open-source social media scheduling and analytics platform — a self-hostable alternative to Buffer, Hootsuite, and Later. It lets you compose posts, schedule them across multiple social platforms, and track engagement from a single dashboard.
 
-**This wizard lets you self-host Postiz on your Windows PC in minutes, with zero command line knowledge.** It handles everything — installing Docker, configuring services, setting up HTTPS, and connecting your social accounts — through a simple step-by-step interface.
+**A desktop GUI installer that lets you self-host Postiz on your Windows PC in minutes, with zero command line knowledge.** It handles everything — installing Docker, configuring services, setting up HTTPS, and connecting your social accounts — through a simple step-by-step interface.
 
 [![Download](https://img.shields.io/github/v/release/SamWylde/postiz-setup-wizard?label=Download&style=for-the-badge)](https://github.com/SamWylde/postiz-setup-wizard/releases/latest)
 
