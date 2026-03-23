@@ -548,24 +548,9 @@ fn read_env_metadata(install_path: &std::path::Path) -> EnvMetadata {
         (None, None, false)
     };
 
-    // Detect configured providers (same keys as import.rs)
-    let provider_keys: &[(&str, &str)] = &[
-        ("X_API_KEY", "x"),
-        ("FACEBOOK_APP_ID", "facebook"),
-        ("LINKEDIN_CLIENT_ID", "linkedin"),
-        ("REDDIT_CLIENT_ID", "reddit"),
-        ("THREADS_APP_ID", "threads"),
-        ("YOUTUBE_CLIENT_ID", "youtube"),
-        ("TIKTOK_CLIENT_ID", "tiktok"),
-        ("PINTEREST_CLIENT_ID", "pinterest"),
-        ("DISCORD_CLIENT_ID", "discord"),
-        ("SLACK_ID", "slack"),
-        ("MASTODON_CLIENT_ID", "mastodon"),
-        ("DRIBBBLE_CLIENT_ID", "dribbble"),
-    ];
-
+    // Detect configured providers (uses shared key list from commands/mod.rs)
     let mut providers = Vec::new();
-    for (env_key, provider_name) in provider_keys {
+    for (env_key, provider_name) in super::PROVIDER_ENV_KEYS {
         for (key, value) in &env_map {
             if key == *env_key && !value.is_empty() {
                 providers.push(provider_name.to_string());

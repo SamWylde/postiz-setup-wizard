@@ -17,6 +17,7 @@ import {
   updateBaseUrls,
   repairStack,
   checkForUpdate,
+  parseTunnelProvider,
   type InstallSnapshot,
 } from "./lib/tauri";
 import { listen, emit } from "@tauri-apps/api/event";
@@ -68,7 +69,7 @@ function App() {
           if (resume.tunnel_mode) setTunnelMode(resume.tunnel_mode as "temporary" | "permanent" | "none");
           if (resume.permanent_domain) setPermanentDomain(resume.permanent_domain);
           if (resume.tunnel_provider) {
-            setTunnelProvider(resume.tunnel_provider as "cloudflared" | "ngrok" | "zrok" | "pinggy");
+            setTunnelProvider(parseTunnelProvider(resume.tunnel_provider));
           }
 
           for (const id of resume.providers_configured) {
@@ -194,7 +195,7 @@ function App() {
     });
 
     return () => {
-      unlisten.then((f) => f());
+      unlisten.then((f) => f()).catch(() => {});
     };
   }, []);
 
@@ -241,7 +242,7 @@ function App() {
     });
 
     return () => {
-      unlisten.then((f) => f());
+      unlisten.then((f) => f()).catch(() => {});
     };
   }, []);
 
@@ -251,7 +252,7 @@ function App() {
 
   if (view === "loading") {
     return (
-      <WizardLayout>
+      <WizardLayout view="loading">
         <div className="flex items-center justify-center h-64">
           <p className="text-gray-500">Loading...</p>
         </div>
@@ -262,7 +263,7 @@ function App() {
   if (view === "recovery" && snapshot) {
     return (
       <>
-        <WizardLayout>
+        <WizardLayout view="recovery">
           <RecoveryCenter
             snapshot={snapshot}
             onResumeWizard={handleResumeWizard}
@@ -274,10 +275,11 @@ function App() {
   }
 
   const Screen = screens[currentStep] ?? PrepareComputer;
+  const layoutView = currentStep === 6 ? "dashboard" : "wizard";
 
   return (
     <>
-      <WizardLayout>
+      <WizardLayout view={layoutView}>
         <Screen />
       </WizardLayout>
       <ToastContainer />

@@ -43,6 +43,43 @@ import {
 
 const POLL_INTERVAL = 15_000;
 
+/** Map Docker container names to user-friendly service labels.
+ *  Known containers from docker-compose.yml:
+ *    postiz, postiz-postgres, postiz-redis, temporal, temporal-postgresql,
+ *    temporal-elasticsearch, temporal-admin-tools, temporal-ui
+ */
+function friendlyServiceName(containerName: string): string {
+  const lower = containerName.toLowerCase();
+  // Main Postiz app — container_name is just "postiz"
+  if (lower === "postiz" || (lower.includes("postiz") && (lower.includes("app") || lower.includes("frontend")))) return "Postiz App";
+  if (lower === "postiz-postgres") return "Database (PostgreSQL)";
+  if (lower === "postiz-redis") return "Cache (Redis)";
+  if (lower === "temporal-postgresql") return "Task Scheduler DB";
+  if (lower === "temporal-elasticsearch") return "Search Engine (Elasticsearch)";
+  if (lower === "temporal-admin-tools") return "Task Scheduler Admin";
+  if (lower === "temporal-ui") return "Task Scheduler UI";
+  if (lower === "temporal") return "Task Scheduler (Temporal)";
+  // Generalized fallback for unknown containers
+  if (lower.includes("postgres")) return "Database (PostgreSQL)";
+  if (lower.includes("redis")) return "Cache (Redis)";
+  if (lower.includes("temporal")) return "Task Scheduler (Temporal)";
+  if (lower.includes("elasticsearch") || lower.includes("elastic")) return "Search Engine (Elasticsearch)";
+  // Fall back to the raw name with dashes cleaned up
+  return containerName.replace(/[-_]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Map Docker state/status to user-friendly text */
+function friendlyContainerStatus(state: string, health: string): string {
+  if (health === "healthy") return "Healthy";
+  if (state === "running" && health === "starting") return "Starting up...";
+  if (state === "running" && health === "unhealthy") return "Running (unhealthy)";
+  if (state === "running") return "Running";
+  if (state === "exited") return "Stopped";
+  if (state === "restarting") return "Restarting...";
+  if (state === "created") return "Created (not started)";
+  return `${state}${health ? ` - ${health}` : ""}`;
+}
+
 export function StatusDashboard() {
   const { installPath, port, tunnelProvider, permanentDomain, tunnelMode, setStep, setProviderStatus, providers } = useWizardStore();
 
@@ -86,7 +123,7 @@ export function StatusDashboard() {
       setUpdateInfo(event.payload);
     });
     return () => {
-      unlisten.then((f) => f());
+      unlisten.then((f) => f()).catch(() => {});
     };
   }, []);
 
@@ -259,8 +296,8 @@ export function StatusDashboard() {
                       ? "warning"
                       : "error"
               }
-              label={c.name}
-              detail={`${c.state} - ${c.status}`}
+              label={friendlyServiceName(c.name)}
+              detail={friendlyContainerStatus(c.state, c.health)}
             />
           ))}
           {snapshot && snapshot.containers.length === 0 && (
@@ -300,10 +337,10 @@ export function StatusDashboard() {
                   : snapshot.tunnel_mode === "permanent" && snapshot.permanent_domain
                     ? "success"
                     : snapshot.tunnel_mode === "none"
-                      ? "warning"
+                      ? "success"
                       : "error"
             }
-            label="Tunnel"
+            label="Web Link"
             detail={
               snapshot == null
                 ? "Checking..."
@@ -312,7 +349,7 @@ export function StatusDashboard() {
                   : snapshot.tunnel_mode === "permanent" && snapshot.permanent_domain
                     ? `Custom domain: ${snapshot.permanent_domain}`
                     : snapshot.tunnel_mode === "none"
-                      ? "Not configured"
+                      ? "Local-only mode"
                       : "Disconnected"
             }
           />
@@ -411,7 +448,7 @@ export function StatusDashboard() {
           {snapshot && snapshot.providers_configured.length > 0 && (
             <div>
               <p className="text-sm font-medium text-gray-700 mb-1">
-                Configured platforms
+                Connected platforms
               </p>
               <p className="text-sm text-gray-600">
                 {snapshot.providers_configured.join(", ")}
@@ -426,9 +463,15 @@ export function StatusDashboard() {
               <WifiOff className="h-4 w-4 text-gray-400" />
             )}
             <p className="text-sm text-gray-600">
-              Tunnel mode:{" "}
+              Web link mode:{" "}
               <span className="font-medium">
-                {snapshot?.tunnel_mode ?? "unknown"}
+                {snapshot?.tunnel_mode === "temporary"
+                  ? "Temporary tunnel"
+                  : snapshot?.tunnel_mode === "permanent"
+                    ? "Custom domain"
+                    : snapshot?.tunnel_mode === "none"
+                      ? "Local only"
+                      : "Unknown"}
               </span>
               {snapshot?.permanent_domain && (
                 <span className="text-gray-400">
@@ -490,7 +533,7 @@ export function StatusDashboard() {
             loading={reconnecting}
           >
             <Globe className="h-4 w-4" />
-            Reconnect Tunnel
+            Reconnect Web Link
           </Button>
         )}
 
@@ -523,7 +566,7 @@ export function StatusDashboard() {
       )}
 
       {/* Docker logs */}
-      <CollapsiblePanel title="Docker Logs">
+      <CollapsiblePanel title="Service Logs">
         <div className="space-y-2">
           <Button variant="ghost" onClick={handleFetchLogs}>
             <RefreshCw className="h-3.5 w-3.5" />

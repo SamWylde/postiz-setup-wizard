@@ -50,6 +50,7 @@ export function InstallPostiz() {
   } = useWizardStore();
 
   const [statusMessage, setStatusMessage] = useState("");
+  const [progressDetail, setProgressDetail] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -67,13 +68,13 @@ export function InstallPostiz() {
 
   useEffect(() => {
     const unlistenProgress = onDockerProgress((e) =>
-      setStatusMessage(e.payload),
+      setProgressDetail(e.payload),
     );
     const unlistenLog = onDockerLog((e) => addDockerLog(e.payload));
 
     return () => {
-      unlistenProgress.then((f) => f());
-      unlistenLog.then((f) => f());
+      unlistenProgress.then((f) => f()).catch(() => {});
+      unlistenLog.then((f) => f()).catch(() => {});
     };
   }, []);
 
@@ -278,7 +279,7 @@ export function InstallPostiz() {
             <div className="mt-4 space-y-2">
               <Button
                 onClick={handleInstall}
-                disabled={showAdvanced && (port < 1024 || port > 65535)}
+                disabled={showAdvanced && (port === 0 || port < 1024 || port > 65535)}
               >
                 Install Postiz
               </Button>
@@ -303,7 +304,11 @@ export function InstallPostiz() {
                     : "loading"
               }
               label={statusMessage}
-              detail={isInstalling ? formatElapsed(elapsed) : undefined}
+              detail={
+                isInstalling
+                  ? `${formatElapsed(elapsed)}${progressDetail ? ` — ${progressDetail}` : ""}`
+                  : undefined
+              }
             />
 
             {installStatus === "pulling" && (

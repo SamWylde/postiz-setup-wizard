@@ -207,7 +207,12 @@ pub async fn apply_config_transaction(
             format!("Failed to start stack: {}. Rolling back...", stderr),
         );
         // Rollback: stop failed containers, restore config, restart with old config
-        fs::copy(&backup_path, &env_path).ok();
+        if let Err(rb_err) = fs::copy(&backup_path, &env_path) {
+            return Err(format!(
+                "Config startup failed AND rollback also failed ({}). Manual fix required: restore {} from {}.",
+                rb_err, env_path.display(), backup_path.display()
+            ));
+        }
         let _ = Command::new("docker")
             .args(["compose", "down"])
             .current_dir(&install_path)
@@ -247,7 +252,12 @@ pub async fn apply_config_transaction(
     } else {
         // ROLLBACK
         let _ = app.emit("docker-progress", "Health check failed. Rolling back config...");
-        fs::copy(&backup_path, &env_path).ok();
+        if let Err(rb_err) = fs::copy(&backup_path, &env_path) {
+            return Err(format!(
+                "Health check failed AND rollback also failed ({}). Manual fix required: restore {} from {}.",
+                rb_err, env_path.display(), backup_path.display()
+            ));
+        }
 
         // Restart stack with old config
         let _ = Command::new("docker")

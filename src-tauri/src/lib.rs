@@ -48,8 +48,12 @@ pub fn run() {
                 ],
             )?;
 
+            let tray_icon = app
+                .default_window_icon()
+                .cloned()
+                .ok_or("No default window icon found — check tauri.conf.json bundle.icon")?;
             let _tray = TrayIconBuilder::new()
-                .icon(app.default_window_icon().cloned().unwrap())
+                .icon(tray_icon)
                 .menu(&menu)
                 .tooltip("Postiz Setup Wizard")
                 .on_menu_event(move |app, event| {

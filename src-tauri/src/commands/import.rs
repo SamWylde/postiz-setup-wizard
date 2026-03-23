@@ -61,27 +61,10 @@ pub async fn import_existing_install(
         }
     }
 
-    // 4. Detect configured providers
-    // Note: Instagram uses the same Facebook App keys (FACEBOOK_APP_ID/SECRET),
-    // so we don't detect it separately — it's implicitly available when Facebook is configured.
-    let provider_keys: &[(&str, &str)] = &[
-        ("X_API_KEY", "x"),
-        ("FACEBOOK_APP_ID", "facebook"),
-        ("LINKEDIN_CLIENT_ID", "linkedin"),
-        ("REDDIT_CLIENT_ID", "reddit"),
-        ("THREADS_APP_ID", "threads"),
-        ("YOUTUBE_CLIENT_ID", "youtube"),
-        ("TIKTOK_CLIENT_ID", "tiktok"),
-        ("PINTEREST_CLIENT_ID", "pinterest"),
-        ("DISCORD_CLIENT_ID", "discord"),
-        ("SLACK_ID", "slack"),
-        ("MASTODON_CLIENT_ID", "mastodon"),
-        ("DRIBBBLE_CLIENT_ID", "dribbble"),
-    ];
-
+    // 4. Detect configured providers (uses shared key list from commands/mod.rs)
     let mut providers_configured: HashSet<String> = HashSet::new();
 
-    for (env_key, provider_name) in provider_keys {
+    for (env_key, provider_name) in super::PROVIDER_ENV_KEYS {
         for (key, value) in &env_map {
             if key == *env_key && !value.is_empty() {
                 providers_configured.insert(provider_name.to_string());

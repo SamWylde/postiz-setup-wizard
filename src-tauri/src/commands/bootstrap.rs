@@ -110,7 +110,7 @@ pub fn scan_machine(state: State<SharedState>) -> Result<MachineState, String> {
         let default_state = dirs::data_local_dir()
             .map(|d| d.join("Postiz").join("install-state.json"))
             .filter(|p| p.exists())
-            .map(|p| p.parent().unwrap().to_string_lossy().to_string());
+            .and_then(|p| p.parent().map(|par| par.to_string_lossy().to_string()));
 
         if default_state.is_some() {
             default_state
@@ -131,8 +131,13 @@ pub fn scan_machine(state: State<SharedState>) -> Result<MachineState, String> {
         }
     };
 
-    // Check if reboot is required (WSL install pending)
-    let reboot_required = false; // TODO: detect pending reboot
+    // Reboot detection: check the Windows PendingFileRenameOperations registry key
+    // which is set after WSL install or other system-level changes.
+    let reboot_required = Command::new("reg")
+        .args(["query", r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager", "/v", "PendingFileRenameOperations"])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
 
     // Update state with any existing install info
     if let Ok(mut app_state) = state.lock() {
@@ -221,9 +226,17 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
             Ok("Docker Desktop installer launched. Please follow the on-screen prompts.".to_string())
         }
         BootstrapAction::StartDocker => {
-            // Try to find and start Docker Desktop
-            let docker_path =
-                r"C:\Program Files\Docker\Docker\Docker Desktop.exe";
+            // Try to find Docker Desktop — check Program Files, then PATH
+            let candidates = [
+                r"C:\Program Files\Docker\Docker\Docker Desktop.exe",
+                r"C:\Program Files (x86)\Docker\Docker\Docker Desktop.exe",
+            ];
+            let docker_path = candidates
+                .iter()
+                .find(|p| std::path::Path::new(p).exists())
+                .ok_or_else(|| {
+                    "Docker Desktop not found. Please install it from https://docker.com/products/docker-desktop".to_string()
+                })?;
 
             Command::new(docker_path)
                 .spawn()
@@ -232,9 +245,17 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
             Ok("Docker Desktop is starting...".to_string())
         }
         BootstrapAction::SwitchLinuxContainers => {
-            let output = Command::new(
+            let candidates = [
                 r"C:\Program Files\Docker\Docker\DockerCli.exe",
-            )
+                r"C:\Program Files (x86)\Docker\Docker\DockerCli.exe",
+            ];
+            let cli_path = candidates
+                .iter()
+                .find(|p| std::path::Path::new(p).exists())
+                .ok_or_else(|| {
+                    "DockerCli.exe not found. Please reinstall Docker Desktop.".to_string()
+                })?;
+            let output = Command::new(cli_path)
             .args(["-SwitchLinuxEngine"])
             .output()
             .map_err(|e| format!("Failed to switch to Linux containers: {}", e))?;

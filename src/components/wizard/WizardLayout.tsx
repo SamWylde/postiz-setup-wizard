@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useWizardStore } from "../../store/wizardStore";
 import { getCurrentAppVersion } from "../../lib/tauri";
 import { StepIndicator } from "./StepIndicator";
+import { Activity, Wrench } from "lucide-react";
 
 const steps = [
   { name: "Prepare Computer", description: "Check prerequisites" },
@@ -14,9 +15,10 @@ const steps = [
 
 interface WizardLayoutProps {
   children: React.ReactNode;
+  view?: "wizard" | "dashboard" | "recovery" | "loading";
 }
 
-export function WizardLayout({ children }: WizardLayoutProps) {
+export function WizardLayout({ children, view = "wizard" }: WizardLayoutProps) {
   const currentStep = useWizardStore((s) => s.currentStep);
   const setStep = useWizardStore((s) => s.setStep);
   const [appVersion, setAppVersion] = useState("v0.1.0");
@@ -33,29 +35,62 @@ export function WizardLayout({ children }: WizardLayoutProps) {
       <div className="w-64 shrink-0 border-r border-gray-200 bg-white p-6 flex flex-col">
         <div className="mb-8">
           <h1 className="text-lg font-semibold text-gray-900">Postiz</h1>
-          <p className="text-xs text-gray-500">Setup Wizard</p>
+          <p className="text-xs text-gray-500">
+            {view === "dashboard"
+              ? "Dashboard"
+              : view === "recovery"
+                ? "Recovery Center"
+                : "Setup Wizard"}
+          </p>
         </div>
 
-        <nav className="flex-1 space-y-1">
-          {steps.map((step, index) => (
-            <StepIndicator
-              key={index}
-              stepNumber={index + 1}
-              name={step.name}
-              description={step.description}
-              state={
-                index < currentStep
-                  ? "complete"
-                  : index === currentStep
-                    ? "active"
-                    : "pending"
-              }
-              onClick={
-                index < currentStep ? () => setStep(index) : undefined
-              }
-            />
-          ))}
-        </nav>
+        {/* Show view-specific sidebar content */}
+        {view === "dashboard" && (
+          <div className="flex-1 space-y-2">
+            <div className="flex items-center gap-2 rounded-lg bg-blue-50 px-3 py-2">
+              <Activity className="h-4 w-4 text-blue-600" />
+              <span className="text-sm font-medium text-blue-700">Live Dashboard</span>
+            </div>
+            <p className="text-xs text-gray-500 px-1">
+              Monitor your Postiz services, manage your tunnel, and check for updates.
+            </p>
+          </div>
+        )}
+
+        {view === "recovery" && (
+          <div className="flex-1 space-y-2">
+            <div className="flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2">
+              <Wrench className="h-4 w-4 text-amber-600" />
+              <span className="text-sm font-medium text-amber-700">Recovery Center</span>
+            </div>
+            <p className="text-xs text-gray-500 px-1">
+              We found an existing install with issues. Use the options here to repair, resume, or start over.
+            </p>
+          </div>
+        )}
+
+        {(view === "wizard" || view === "loading") && (
+          <nav className="flex-1 space-y-1">
+            {steps.map((step, index) => (
+              <StepIndicator
+                key={index}
+                stepNumber={index + 1}
+                name={step.name}
+                description={step.description}
+                state={
+                  index < currentStep
+                    ? "complete"
+                    : index === currentStep
+                      ? "active"
+                      : "pending"
+                }
+                onClick={
+                  index < currentStep ? () => setStep(index) : undefined
+                }
+              />
+            ))}
+          </nav>
+        )}
 
         <div className="pt-4 border-t border-gray-200">
           <p className="text-xs text-gray-400">{appVersion}</p>

@@ -79,6 +79,16 @@ export const restartAndVerify = (path: string) =>
 // Tunnel commands
 export type TunnelProvider = "cloudflared" | "ngrok" | "zrok" | "pinggy";
 
+const VALID_TUNNEL_PROVIDERS: readonly TunnelProvider[] = ["cloudflared", "ngrok", "zrok", "pinggy"];
+
+/** Parse a string into a valid TunnelProvider, defaulting to "cloudflared" for unknown values. */
+export function parseTunnelProvider(s: string | undefined | null): TunnelProvider {
+  if (s && (VALID_TUNNEL_PROVIDERS as readonly string[]).includes(s)) {
+    return s as TunnelProvider;
+  }
+  return "cloudflared";
+}
+
 export const startTunnel = (port: number, provider?: TunnelProvider, config?: string) =>
   invoke<string>("start_tunnel", { port, provider, config });
 

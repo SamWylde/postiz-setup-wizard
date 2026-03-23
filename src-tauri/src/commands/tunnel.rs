@@ -7,6 +7,17 @@ use tauri::{Emitter, State};
 use crate::commands::bootstrap::resolve_binary;
 use crate::state::{SharedState, TunnelProvider};
 
+/// How long to wait before first URL poll (seconds).
+const URL_INITIAL_WAIT_SECS: u64 = 10;
+/// How long to wait for a second URL poll attempt (seconds).
+const URL_RETRY_WAIT_SECS: u64 = 10;
+/// Number of attempts to poll ngrok HTTP API (2s between each).
+const NGROK_API_POLL_ATTEMPTS: u32 = 8;
+/// Pinggy initial wait before first URL poll (seconds).
+const PINGGY_INITIAL_WAIT_SECS: u64 = 8;
+/// Pinggy retry wait (seconds).
+const PINGGY_RETRY_WAIT_SECS: u64 = 7;
+
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct TunnelStatus {
     pub status: String, // "running", "starting", "stopped", "error"
@@ -87,7 +98,7 @@ fn spawn_tunnel_process(
 
             std::thread::spawn(move || {
                 let reader = BufReader::new(stderr);
-                let url_re = Regex::new(&pattern).unwrap();
+                let url_re = Regex::new(&pattern).expect("hardcoded tunnel URL regex must compile");
                 for line in reader.lines() {
                     if let Ok(line) = line {
                         if let Some(mat) = url_re.find(&line) {
@@ -124,7 +135,7 @@ fn spawn_tunnel_process(
 
             std::thread::spawn(move || {
                 let reader = BufReader::new(stdout);
-                let url_re = Regex::new(&pattern).unwrap();
+                let url_re = Regex::new(&pattern).expect("hardcoded tunnel URL regex must compile");
                 for line in reader.lines() {
                     if let Ok(line) = line {
                         if let Some(mat) = url_re.find(&line) {
@@ -236,7 +247,7 @@ async fn start_cloudflared(
         s.tunnel_pid = Some(pid);
     }
 
-    match wait_for_url(&state_url, 10, 10).await {
+    match wait_for_url(&state_url, URL_INITIAL_WAIT_SECS, URL_RETRY_WAIT_SECS).await {
         Some(url) => {
             if let Ok(mut s) = state.lock() {
                 s.tunnel_url = Some(url.clone());
@@ -251,7 +262,7 @@ async fn start_cloudflared(
             if let Ok(mut s) = state.lock() {
                 s.tunnel_pid = None;
             }
-            Err("Tunnel started but URL not captured. The process has been stopped — please try again.".to_string())
+            Err("Cloudflared started but URL not captured. The process has been stopped — please try again.".to_string())
         }
     }
 }
@@ -292,7 +303,7 @@ async fn start_ngrok(
     }
 
     // Poll ngrok API for the tunnel URL
-    match poll_ngrok_api("http://localhost:4040/api/tunnels", 8).await {
+    match poll_ngrok_api("http://localhost:4040/api/tunnels", NGROK_API_POLL_ATTEMPTS).await {
         Some(url) => {
             if let Ok(mut s) = state.lock() {
                 s.tunnel_url = Some(url.clone());
@@ -334,7 +345,7 @@ async fn start_zrok(
         s.tunnel_pid = Some(pid);
     }
 
-    match wait_for_url(&state_url, 10, 10).await {
+    match wait_for_url(&state_url, URL_INITIAL_WAIT_SECS, URL_RETRY_WAIT_SECS).await {
         Some(url) => {
             if let Ok(mut s) = state.lock() {
                 s.tunnel_url = Some(url.clone());
@@ -392,7 +403,7 @@ async fn start_pinggy(
         s.tunnel_pid = Some(pid);
     }
 
-    match wait_for_url(&state_url, 8, 7).await {
+    match wait_for_url(&state_url, PINGGY_INITIAL_WAIT_SECS, PINGGY_RETRY_WAIT_SECS).await {
         Some(url) => {
             if let Ok(mut s) = state.lock() {
                 s.tunnel_url = Some(url.clone());

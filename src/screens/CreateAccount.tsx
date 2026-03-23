@@ -60,11 +60,11 @@ export function CreateAccount() {
   const handleAccountCreated = async () => {
     setVerifying(true);
     try {
-      // Verify Postiz is still healthy after account creation
+      // We can't verify account creation itself — only that Postiz is still healthy
       const status = await getStackStatus(installPath);
       if (status.postiz_responding) {
         setAccountCreated(true);
-        showToast("Account verified!", "success");
+        showToast("Postiz is running — proceeding to next step.", "success");
       } else {
         showToast(
           "Postiz isn't responding. Please wait a moment and try again.",
@@ -72,7 +72,7 @@ export function CreateAccount() {
         );
       }
     } catch {
-      // If we can't check, trust the user
+      // Transient network issue shouldn't block setup
       setAccountCreated(true);
     }
     setVerifying(false);
@@ -121,8 +121,8 @@ export function CreateAccount() {
                 disabled={accountCreated}
               >
                 {accountCreated
-                  ? "Account created"
-                  : "I've created my account"}
+                  ? "Ready to continue"
+                  : "I've created my account — continue"}
               </Button>
             </>
           )}

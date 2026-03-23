@@ -21,6 +21,7 @@ import {
   ExternalLink,
   X,
   Check,
+  Clock,
   AlertTriangle,
   Lock,
   ChevronDown,
@@ -237,7 +238,7 @@ export function ConnectProviders() {
 
   const renderProviderCard = (provider: ProviderDefinition) => {
     const status = stagedProviders.has(provider.id)
-      ? "configured" as const
+      ? "staged" as const
       : providerStatuses[provider.id] ?? "unconfigured";
     const isGated = noPublicUrl || (provider.requiresPermanentDomain
       ? tunnelMode !== "permanent"
@@ -254,9 +255,11 @@ export function ConnectProviders() {
             ? "border-gray-200 bg-gray-50 opacity-60 cursor-not-allowed"
             : status === "configured"
               ? "border-green-200 bg-green-50 hover:bg-green-100"
-              : status === "stale"
-                ? "border-amber-200 bg-amber-50 hover:bg-amber-100"
-                : "border-gray-200 bg-white hover:bg-gray-50"
+              : status === "staged"
+                ? "border-blue-200 bg-blue-50 hover:bg-blue-100"
+                : status === "stale"
+                  ? "border-amber-200 bg-amber-50 hover:bg-amber-100"
+                  : "border-gray-200 bg-white hover:bg-gray-50"
         }`}
       >
         <ProviderIcon name={provider.icon} />
@@ -271,17 +274,22 @@ export function ConnectProviders() {
                 : noPublicUrl
                   ? "Needs web link"
                   : "Not available"
-              : isNoEnv && status !== "configured"
+              : isNoEnv && status !== "configured" && status !== "staged"
                 ? "No setup needed"
                 : status === "configured"
                   ? "Configured"
-                  : status === "stale"
-                    ? "Needs update"
-                    : "Not configured"}
+                  : status === "staged"
+                    ? "Saved — will apply on continue"
+                    : status === "stale"
+                      ? "Needs update"
+                      : "Not configured"}
           </p>
         </div>
         {status === "configured" && (
           <Check className="h-4 w-4 text-green-600 shrink-0" />
+        )}
+        {status === "staged" && (
+          <Clock className="h-4 w-4 text-blue-600 shrink-0" />
         )}
         {status === "stale" && (
           <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useWizardStore } from "../store/wizardStore";
 import {
   startTunnel,
@@ -64,6 +64,11 @@ export function CreateWebLink() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [providerConfig, setProviderConfig] = useState("");
   const [installing, setInstalling] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // Rescan machine state on mount so provider availability is up to date
   // (e.g. after resume or recovery when machineState may be null)
@@ -85,8 +90,8 @@ export function CreateWebLink() {
     });
 
     return () => {
-      unlistenUrl.then((f) => f());
-      unlistenStatus.then((f) => f());
+      unlistenUrl.then((f) => f()).catch(() => {});
+      unlistenStatus.then((f) => f()).catch(() => {});
     };
   }, []);
 
@@ -149,26 +154,31 @@ export function CreateWebLink() {
     try {
       const config = providerConfig.trim() || undefined;
       const url = await startTunnel(port, tunnelProvider, config);
+      if (!mountedRef.current) return;
       setTunnelUrl(url);
       setTunnelStatus("restarting");
       setStatusMessage("Updating Postiz configuration...");
 
       await updateBaseUrls(installPath, url);
       await restartAndVerify(installPath);
+      if (!mountedRef.current) return;
 
       setStatusMessage("Verifying remote access...");
 
       await new Promise((r) => setTimeout(r, 10000));
+      if (!mountedRef.current) return;
 
       try {
         await fetch(url, {
           mode: "no-cors",
           signal: AbortSignal.timeout(10000),
         });
+        if (!mountedRef.current) return;
         setRemoteReachable(true);
         setTunnelStatus("running");
         setStatusMessage("Web link is active!");
       } catch {
+        if (!mountedRef.current) return;
         setRemoteReachable(false);
         setTunnelStatus("running");
         setStatusMessage(
@@ -176,6 +186,7 @@ export function CreateWebLink() {
         );
       }
     } catch (err) {
+      if (!mountedRef.current) return;
       setTunnelStatus("error");
       setStatusMessage(friendlyError(String(err)));
     }

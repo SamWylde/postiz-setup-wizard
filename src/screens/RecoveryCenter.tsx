@@ -174,14 +174,14 @@ export function RecoveryCenter({
                     ? "warning"
                     : "error"
             }
-            label="Tunnel"
+            label="Web Link"
             detail={
               snapshot.tunnel_alive
                 ? snapshot.tunnel_url ?? "Active"
                 : snapshot.tunnel_mode === "permanent" && snapshot.permanent_domain
                   ? `Custom domain: ${snapshot.permanent_domain}`
                   : snapshot.tunnel_mode === "none"
-                    ? "Not configured"
+                    ? "Local-only mode (no social platform connections)"
                     : "Disconnected"
             }
           />
@@ -257,7 +257,7 @@ export function RecoveryCenter({
                 Reconnect Web Link
               </h4>
               <p className="text-xs text-gray-500 mt-0.5">
-                Create a new public URL for social platforms
+                Re-establish the public URL for social platforms
               </p>
             </div>
           </div>
