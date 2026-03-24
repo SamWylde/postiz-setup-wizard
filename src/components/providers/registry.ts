@@ -52,7 +52,7 @@ export const providers: ProviderDefinition[] = [
         copyLabel: "Website URL",
       },
       {
-        text: "Request permissions: pages_show_list, business_management, pages_manage_posts, pages_manage_engagement, pages_read_engagement, read_insights",
+        text: "Go to App Review > Permissions and Features, then request: pages_show_list, business_management, pages_manage_posts, pages_manage_engagement, pages_read_engagement, read_insights",
       },
       { text: "Switch the app to Live mode" },
       { text: "Copy your App ID and App Secret from App Settings > Basic" },
@@ -91,7 +91,7 @@ export const providers: ProviderDefinition[] = [
         copyLabel: "Redirect URI",
       },
       {
-        text: "Request permissions: instagram_basic, instagram_content_publish, instagram_manage_comments, instagram_manage_insights, pages_show_list, pages_read_engagement, business_management",
+        text: "Go to App Review > Permissions and Features, then request: instagram_basic, instagram_content_publish, instagram_manage_comments, instagram_manage_insights, pages_show_list, pages_read_engagement, business_management",
       },
       {
         text: "Add your Instagram account as an app tester and accept the invitation",
@@ -116,9 +116,9 @@ export const providers: ProviderDefinition[] = [
       {
         text: "Fill in the app name, associate with your company page, and upload a logo",
       },
-      { text: "Go to the Products tab and add required products" },
+      { text: "Go to the Products tab and request 'Share on LinkedIn' and 'Sign In with LinkedIn using OpenID Connect'" },
       {
-        text: "Request 'Advertising API' for token refreshing",
+        text: "Also request 'Advertising API' in the Products tab (needed for token refreshing)",
       },
       {
         text: "Go to Auth tab and add this redirect URL:",
@@ -203,7 +203,7 @@ export const providers: ProviderDefinition[] = [
       { text: "Go to Meta for Developers (use same or new app)" },
       { text: "Add 'Access the Threads API' product" },
       {
-        text: "Configure permissions: threads_content_publish, threads_basic",
+        text: "Go to Use Cases > Authenticate and request data from users, then add: threads_content_publish, threads_basic",
       },
       {
         text: "Set this redirect URI (click the URL to make it active):",
@@ -238,7 +238,7 @@ export const providers: ProviderDefinition[] = [
         copyLabel: "Redirect URI",
       },
       {
-        text: "Enable: YouTube Data API v3, YouTube Analytics API, YouTube Reporting API",
+        text: "Go to APIs & Services > Library, search for and enable: YouTube Data API v3, YouTube Analytics API, YouTube Reporting API",
       },
       { text: "Add yourself as a test user" },
       { text: "Copy the Client ID and Client Secret" },
@@ -261,7 +261,7 @@ export const providers: ProviderDefinition[] = [
       { text: "Go to TikTok for Developers and create an app" },
       { text: "Add Login Kit and Content Posting API products" },
       {
-        text: "Configure scopes: user.info.basic, video.create, video.publish, video.upload, user.info.profile",
+        text: "In your app's Manage > Scopes section, add: user.info.basic, video.create, video.publish, video.upload, user.info.profile",
       },
       {
         text: "Set this callback URL:",
