@@ -1,6 +1,10 @@
 import { create } from "zustand";
 import { updateStep, saveResumeState, syncProviderStatus, syncTunnelConfig } from "../lib/tauri";
 
+/** Fire-and-forget persistence — log errors instead of silently swallowing them. */
+const persist = (p: Promise<unknown>) =>
+  p.catch((err) => console.error("[wizardStore] persist failed:", err));
+
 export interface MachineState {
   windows_version_ok: boolean;
   wsl2_installed: boolean;
@@ -152,8 +156,8 @@ export const useWizardStore = create<WizardState>((set) => ({
   setStep: (step) => {
     set({ currentStep: step });
     // Persist step to Rust backend and save resume state
-    updateStep(step).catch(() => {});
-    saveResumeState().catch(() => {});
+    persist(updateStep(step));
+    persist(saveResumeState());
   },
   setMachineState: (machineState) => set({ machineState }),
   setBootstrapStatus: (bootstrapStatus) => set({ bootstrapStatus }),
@@ -167,25 +171,22 @@ export const useWizardStore = create<WizardState>((set) => ({
   setTunnelUrl: (tunnelUrl) => set({ tunnelUrl }),
   setTunnelMode: (tunnelMode) => {
     set((state) => {
-      syncTunnelConfig(tunnelMode, state.permanentDomain || null, state.tunnelProvider)
-        .then(() => saveResumeState())
-        .catch(() => {});
+      persist(syncTunnelConfig(tunnelMode, state.permanentDomain || null, state.tunnelProvider)
+        .then(() => saveResumeState()));
       return { tunnelMode };
     });
   },
   setTunnelProvider: (tunnelProvider) => {
     set((state) => {
-      syncTunnelConfig(state.tunnelMode, state.permanentDomain || null, tunnelProvider)
-        .then(() => saveResumeState())
-        .catch(() => {});
+      persist(syncTunnelConfig(state.tunnelMode, state.permanentDomain || null, tunnelProvider)
+        .then(() => saveResumeState()));
       return { tunnelProvider };
     });
   },
   setPermanentDomain: (permanentDomain) => {
     set((state) => {
-      syncTunnelConfig(state.tunnelMode, permanentDomain || null, state.tunnelProvider)
-        .then(() => saveResumeState())
-        .catch(() => {});
+      persist(syncTunnelConfig(state.tunnelMode, permanentDomain || null, state.tunnelProvider)
+        .then(() => saveResumeState()));
       return { permanentDomain };
     });
   },
@@ -200,9 +201,8 @@ export const useWizardStore = create<WizardState>((set) => ({
       const stale = Object.entries(newProviders)
         .filter(([, s]) => s === "stale")
         .map(([id]) => id);
-      syncProviderStatus(configured, stale)
-        .then(() => saveResumeState())
-        .catch(() => {});
+      persist(syncProviderStatus(configured, stale)
+        .then(() => saveResumeState()));
       return { providers: newProviders };
     });
   },

@@ -97,7 +97,13 @@ export function ImportClonePanel({ onCancel }: ImportClonePanelProps) {
     try {
       const result = await importClone(clonePath, password, installPath, customPort);
       // Parse the actual port from backend response
-      const actualPort = JSON.parse(result).port as number;
+      let actualPort: number;
+      try {
+        actualPort = JSON.parse(result).port as number;
+        if (!actualPort || actualPort < 1) throw new Error("missing port");
+      } catch {
+        throw new Error("Import succeeded but returned an unexpected response. Please check Docker status.");
+      }
       // Update store state
       setInstallPath(installPath);
       setPort(actualPort);
@@ -206,7 +212,7 @@ export function ImportClonePanel({ onCancel }: ImportClonePanelProps) {
               <Button
                 onClick={handleValidate}
                 loading={validating}
-                disabled={password.length < 4}
+                disabled={password.length < 8}
               >
                 Verify Backup
               </Button>

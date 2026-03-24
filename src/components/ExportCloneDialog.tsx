@@ -36,7 +36,7 @@ export function ExportCloneDialog({ onClose }: ExportCloneDialogProps) {
   const [error, setError] = useState<string | null>(null);
 
   const passwordsMatch = password === confirmPassword;
-  const canExport = password.length >= 4 && passwordsMatch && !exporting;
+  const canExport = password.length >= 8 && passwordsMatch && !exporting;
 
   useEffect(() => {
     const unlisten = onTransferProgress((e) => setProgress(e.payload));

@@ -185,8 +185,8 @@ pub async fn export_clone(
 ) -> Result<String, String> {
     let install_path = PathBuf::from(&path);
 
-    if password.len() < 4 {
-        return Err("Password must be at least 4 characters.".to_string());
+    if password.len() < 8 {
+        return Err("Password must be at least 8 characters.".to_string());
     }
 
     // Verify install exists
@@ -385,8 +385,8 @@ pub async fn validate_clone_file(
     clone_path: String,
     password: String,
 ) -> Result<CloneManifest, String> {
-    if password.len() < 4 {
-        return Err("Password must be at least 4 characters.".to_string());
+    if password.len() < 8 {
+        return Err("Password must be at least 8 characters.".to_string());
     }
 
     let encrypted = fs::read(&clone_path)
@@ -453,8 +453,8 @@ pub async fn import_clone(
 ) -> Result<String, String> {
     let install_dir = PathBuf::from(&install_path);
 
-    if password.len() < 4 {
-        return Err("Password must be at least 4 characters.".to_string());
+    if password.len() < 8 {
+        return Err("Password must be at least 8 characters.".to_string());
     }
 
     // Preflight: port

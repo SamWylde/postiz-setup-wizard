@@ -284,14 +284,9 @@ export function InstallPostiz() {
                     if (v >= 0 && v <= 65535) setPort(v);
                   }}
                 />
-                {port > 0 && port < 1024 && (
+                {port < 1024 && (
                   <p className="mt-1 text-xs text-amber-600">
-                    Ports below 1024 are reserved. Choose a port between 1024 and 65535.
-                  </p>
-                )}
-                {(port === 0) && (
-                  <p className="mt-1 text-xs text-amber-600">
-                    Port 0 is not valid. Choose a port between 1024 and 65535.
+                    {port === 0 ? "Port 0 is not valid." : "Ports below 1024 are reserved."} Choose a port between 1024 and 65535.
                   </p>
                 )}
                 <p className="mt-1 text-xs text-gray-500">

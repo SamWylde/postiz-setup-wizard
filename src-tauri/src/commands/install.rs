@@ -10,16 +10,13 @@ const DOCKER_COMPOSE_TEMPLATE: &str = include_str!("../templates/docker-compose.
 const DYNAMIC_CONFIG_TEMPLATE: &str = include_str!("../templates/dynamicconfig/development-sql.yaml");
 
 fn find_free_port(start: u16) -> u16 {
-    let mut port = start;
-    loop {
+    let end = start.saturating_add(1000);
+    for port in start..=end {
         if TcpListener::bind(("127.0.0.1", port)).is_ok() {
             return port;
         }
-        port += 1;
-        if port == 0 {
-            return start; // wrapped around, fallback
-        }
     }
+    start // fallback if no free port found in range
 }
 
 fn generate_env_contents(port: u16, jwt_secret: &str, postgres_password: &str) -> String {
