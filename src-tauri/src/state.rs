@@ -44,7 +44,6 @@ pub struct ResumeState {
     pub permanent_domain: Option<String>,
     pub providers_configured: Vec<String>,
     pub providers_stale: Vec<String>,
-    pub reboot_pending_for: Option<String>,
     #[serde(default)]
     pub transfer_review_pending: bool,
     #[serde(default)]
@@ -64,7 +63,6 @@ impl Default for ResumeState {
             permanent_domain: None,
             providers_configured: Vec::new(),
             providers_stale: Vec::new(),
-            reboot_pending_for: None,
             transfer_review_pending: false,
             tunnel_provider: String::new(),
             last_updated: String::new(),
@@ -131,7 +129,6 @@ pub struct AppState {
     pub pending_env_changes: HashMap<String, String>,
     pub stale_providers: HashSet<String>,
     pub providers_configured: HashSet<String>,
-    pub reboot_pending: Option<String>,
     #[allow(dead_code)] // Retained for future use (e.g. exposing logs via command)
     pub docker_logs: Vec<String>,
     pub docker_child_pid: Option<u32>,
@@ -156,7 +153,6 @@ impl Default for AppState {
             pending_env_changes: HashMap::new(),
             stale_providers: HashSet::new(),
             providers_configured: HashSet::new(),
-            reboot_pending: None,
             docker_logs: Vec::new(),
             docker_child_pid: None,
             docker_op_cancelled: false,

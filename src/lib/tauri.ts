@@ -153,7 +153,6 @@ export const loadResumeState = (installPath?: string) =>
     permanent_domain: string | null;
     providers_configured: string[];
     providers_stale: string[];
-    reboot_pending_for: string | null;
     transfer_review_pending: boolean;
     tunnel_provider: string;
   } | null>("load_resume_state", { installPath });

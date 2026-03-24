@@ -20,7 +20,6 @@ pub struct MachineState {
     pub disk_space_gb: f64,
     pub ram_available_gb: f64,
     pub existing_install: Option<String>,
-    pub reboot_required: bool,
 }
 
 fn check_command(cmd: &str, args: &[&str]) -> bool {
@@ -149,17 +148,6 @@ fn scan_machine_blocking() -> (MachineState, Option<String>) {
         }
     };
 
-    // Reboot detection: only relevant when WSL2 isn't installed yet.
-    // The PendingFileRenameOperations registry key is set by many Windows operations
-    // (updates, driver installs, etc.), not just WSL. Only flag reboot_required when
-    // WSL2 isn't functional — that's the only case where a reboot blocks our workflow.
-    let reboot_required = !wsl2_installed
-        && silent_cmd("reg")
-            .args(["query", r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager", "/v", "PendingFileRenameOperations"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
-
     let machine = MachineState {
         windows_version_ok,
         wsl2_installed,
@@ -173,7 +161,6 @@ fn scan_machine_blocking() -> (MachineState, Option<String>) {
         disk_space_gb,
         ram_available_gb,
         existing_install: existing_install.clone(),
-        reboot_required,
     };
 
     (machine, existing_install)
@@ -200,7 +187,7 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
                 .map_err(|e| format!("Failed to run wsl --install: {}", e))?;
 
             if output.status.success() {
-                Ok("WSL2 installation started. A reboot may be required.".to_string())
+                Ok("WSL2 installed successfully.".to_string())
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 Err(format!("WSL2 installation failed: {}", stderr))

@@ -27,8 +27,7 @@ export function PrepareComputer() {
         state.docker_running &&
         state.docker_linux_mode &&
         state.disk_space_gb >= 3 &&
-        state.ram_available_gb >= 2 &&
-        !state.reboot_required;
+        state.ram_available_gb >= 2;
 
       setBootstrapStatus(allGood ? "ready" : "action-needed");
     } catch (err) {
@@ -62,23 +61,12 @@ export function PrepareComputer() {
   const handleBootstrap = async () => {
     if (!machineState) return;
 
-    if (machineState.reboot_required) {
-      setBootstrapStatus("rebooting");
-      return;
-    }
-
     if (!machineState.wsl2_installed) {
       const ok = await runAction("InstallWsl2", "Installing WSL2");
       if (ok) {
-        // WSL2 install succeeded — reboot may be required, rescan to verify
+        // WSL2 install succeeded — rescan to verify
         await checkMachine();
-        // If rescan shows reboot_required or WSL still not installed, show reboot screen
-        const latest = useWizardStore.getState().machineState;
-        if (latest && (latest.reboot_required || !latest.wsl2_installed)) {
-          setBootstrapStatus("rebooting");
-        }
       }
-      // If runAction failed, the error is in actionLog and we stay on action-needed
       return;
     }
 
@@ -192,13 +180,6 @@ export function PrepareComputer() {
                 label="Memory (RAM)"
                 detail={`${machineState.ram_available_gb.toFixed(1)} GB available (need 2 GB)`}
               />
-              {machineState.reboot_required && (
-                <StatusIndicator
-                  status="warning"
-                  label="System restart"
-                  detail="A restart is required to complete setup"
-                />
-              )}
             </>
           ) : scanError && bootstrapStatus !== "checking" ? (
             <>
@@ -229,17 +210,6 @@ export function PrepareComputer() {
           </div>
         )}
 
-        {bootstrapStatus === "rebooting" && (
-          <div className="mt-4 pt-4 border-t border-gray-200">
-            <p className="text-sm text-amber-700 bg-amber-50 rounded-lg p-3 mb-3">
-              A system restart is required to continue setup. Please restart
-              your computer, then reopen this app.
-            </p>
-            <Button variant="secondary" onClick={checkMachine}>
-              I've restarted — re-check now
-            </Button>
-          </div>
-        )}
       </Card>
 
       {actionLog.length > 0 && (

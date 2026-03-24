@@ -18,7 +18,6 @@ export interface MachineState {
   disk_space_gb: number;
   ram_available_gb: number;
   existing_install: string | null;
-  reboot_required: boolean;
 }
 
 export interface ContainerInfo {
@@ -45,8 +44,7 @@ export interface WizardState {
     | "idle"
     | "checking"
     | "ready"
-    | "action-needed"
-    | "rebooting";
+    | "action-needed";
 
   // Step 1: Install Postiz
   installPath: string;
