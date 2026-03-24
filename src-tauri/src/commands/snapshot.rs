@@ -22,9 +22,7 @@ pub async fn get_install_snapshot(
         providers_configured,
         providers_stale,
     ) = {
-        let s = state
-            .lock()
-            .map_err(|e| format!("State lock failed: {}", e))?;
+        let s = state.lock().unwrap_or_else(|e| e.into_inner());
         (
             s.install_path.clone(),
             s.port,
@@ -55,9 +53,20 @@ pub async fn get_install_snapshot(
         let val: serde_json::Value = serde_json::from_str(&contents).ok()?;
         let custom_path = val["install_path"].as_str()?;
         let custom = std::path::PathBuf::from(custom_path);
+        if !custom.exists() {
+            eprintln!(
+                "install-pointer.json points to '{}' which no longer exists on disk; ignoring stale pointer",
+                custom.display()
+            );
+            return None;
+        }
         if custom.join("docker-compose.yml").exists() && custom.join("postiz.env").exists() {
             Some(custom)
         } else {
+            eprintln!(
+                "install-pointer.json points to '{}' which exists but is missing docker-compose.yml or postiz.env; ignoring",
+                custom.display()
+            );
             None
         }
     });
@@ -195,10 +204,7 @@ pub async fn get_install_snapshot(
         .unwrap_or(false);
 
     let tunnel_url = if tunnel_alive {
-        state
-            .lock()
-            .ok()
-            .and_then(|s| s.tunnel_url.clone())
+        state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_url.clone()
     } else {
         None
     };
@@ -261,17 +267,24 @@ pub async fn validate_preflight(
         },
     });
 
-    // 2. Install path available (skip check if retrying a failed install)
-    let compose_exists = PathBuf::from(&path).join("docker-compose.yml").exists();
+    // 2. Install path available — only allow existing files when a .tmp staging
+    //    folder proves this wizard created the partial state (retry scenario).
+    let install_dir = PathBuf::from(&path);
+    let compose_exists = install_dir.join("docker-compose.yml").exists();
+    let env_exists = install_dir.join("postiz.env").exists();
+    let has_existing_install = compose_exists || env_exists;
+    let tmp_exists = install_dir.join(".tmp").exists();
+    // allow_existing is only honoured when the .tmp marker is also present
+    let retry_allowed = allow_existing && tmp_exists;
     checks.push(PreflightCheck {
         name: "Install path available".to_string(),
-        passed: !compose_exists || allow_existing,
-        message: if !compose_exists {
+        passed: !has_existing_install || retry_allowed || tmp_exists,
+        message: if !has_existing_install {
             "Install path is available.".to_string()
-        } else if allow_existing {
-            "Existing install found — will retry in place.".to_string()
+        } else if tmp_exists {
+            "Staged .tmp folder found — resuming previous install attempt.".to_string()
         } else {
-            "An existing docker-compose.yml was found. This may be a re-install.".to_string()
+            "An existing Postiz install was found at this path (docker-compose.yml or postiz.env already exist). Use recovery/import to manage the existing install, or choose a different path.".to_string()
         },
     });
 

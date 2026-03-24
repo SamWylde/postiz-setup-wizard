@@ -170,7 +170,8 @@ pub fn prepare_install(
         .map_err(|e| format!("Failed to write postiz.env: {}", e))?;
 
     // Update app state
-    if let Ok(mut app_state) = state.lock() {
+    {
+        let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
         app_state.install_path = Some(install_path.clone());
         app_state.port = port;
         app_state.local_url = Some(format!("http://localhost:{}", port));
@@ -184,7 +185,19 @@ pub fn commit_install(path: String) -> Result<String, String> {
     let install_path = PathBuf::from(&path);
     let tmp_path = install_path.join(".tmp");
 
+    // Guard: the .tmp staging folder MUST exist — it proves this wizard created
+    // the files being committed. Without it we might overwrite a foreign install.
+    let compose_exists = install_path.join("docker-compose.yml").exists();
+    let env_exists = install_path.join("postiz.env").exists();
     if !tmp_path.exists() {
+        if compose_exists || env_exists {
+            return Err(
+                "Refusing to overwrite an existing Postiz install. \
+                 A docker-compose.yml or postiz.env already exists at the target path \
+                 without a staged .tmp folder. Use recovery/import instead."
+                    .to_string(),
+            );
+        }
         return Err("No staged install found. Run prepare_install first.".to_string());
     }
 

@@ -3,8 +3,7 @@ import { useWizardStore } from "../store/wizardStore";
 import {
   getInstallSnapshot,
   exportDiagnostics,
-  clearTransferReview,
-  saveResumeState,
+  clearTransferReviewAndSave,
   type InstallSnapshot,
 } from "../lib/tauri";
 import { open } from "@tauri-apps/plugin-shell";
@@ -32,12 +31,12 @@ export function SetupComplete() {
   const [exporting, setExporting] = useState(false);
   const [showExport, setShowExport] = useState(false);
 
-  // Clear transfer review flag when reaching this screen and persist it
+  // Clear transfer review flag and persist atomically in one backend call
   useEffect(() => {
     if (transferReviewPending) {
-      clearTransferReview().catch(() => {});
-      setTransferReviewPending(false);
-      saveResumeState().catch(() => {});
+      clearTransferReviewAndSave()
+        .then(() => setTransferReviewPending(false))
+        .catch(() => {});
     }
   }, [transferReviewPending, setTransferReviewPending]);
 

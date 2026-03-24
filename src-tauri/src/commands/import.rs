@@ -77,9 +77,7 @@ pub async fn import_existing_install(
 
     // 5. Update AppState
     {
-        let mut s = state
-            .lock()
-            .map_err(|e| format!("State lock failed: {}", e))?;
+        let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
         s.install_path = Some(install_path.clone());
         s.port = port;
         s.local_url = Some(format!("http://localhost:{}", port));
@@ -94,11 +92,12 @@ pub async fn import_existing_install(
 
     let _ = fs::create_dir_all(&pointer_dir);
     let pointer = serde_json::json!({ "install_path": path });
-    fs::write(
-        &pointer_path,
-        serde_json::to_string_pretty(&pointer).unwrap_or_default(),
-    )
-    .map_err(|e| format!("Failed to write install pointer: {}", e))?;
+    let content = serde_json::to_string_pretty(&pointer).unwrap_or_default();
+    let tmp = pointer_path.with_extension("tmp");
+    fs::write(&tmp, &content)
+        .map_err(|e| format!("Failed to write install pointer: {}", e))?;
+    fs::rename(&tmp, &pointer_path)
+        .map_err(|e| format!("Failed to rename install pointer: {}", e))?;
 
     // 7. Return success
     Ok(format!(

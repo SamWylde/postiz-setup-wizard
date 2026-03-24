@@ -8,6 +8,9 @@ import { StatusIndicator } from "../components/ui/StatusIndicator";
 import { NavigationButtons } from "../components/wizard/NavigationButtons";
 import { showToast } from "../components/ui/Toast";
 
+const HEALTH_POLL_INTERVAL_MS = 3_000;
+const MAX_HEALTH_ATTEMPTS = 60;
+
 export function CreateAccount() {
   const {
     port,
@@ -20,14 +23,20 @@ export function CreateAccount() {
   } = useWizardStore();
   const [checking, setChecking] = useState(true);
   const [verifying, setVerifying] = useState(false);
+  const [healthTimedOut, setHealthTimedOut] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
 
   const localUrl = `http://localhost:${port}`;
 
   useEffect(() => {
     let cancelled = false;
 
+    // ~3 minutes at 3s intervals
+
     const pollHealth = async () => {
-      while (!cancelled) {
+      let attempts = 0;
+      while (!cancelled && attempts < MAX_HEALTH_ATTEMPTS) {
+        attempts++;
         try {
           const status = await getStackStatus(installPath);
           if (status.postiz_responding) {
@@ -38,7 +47,15 @@ export function CreateAccount() {
         } catch {
           // Keep polling
         }
-        await new Promise((r) => setTimeout(r, 3000));
+        await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
+      }
+      if (!cancelled) {
+        setChecking(false);
+        setHealthTimedOut(true);
+        showToast(
+          "Postiz did not respond after ~3 minutes. Check the Docker logs and try again.",
+          "error",
+        );
       }
     };
 
@@ -51,7 +68,7 @@ export function CreateAccount() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [retryCount]);
 
   const handleOpenPostiz = () => {
     open(localUrl);
@@ -94,10 +111,25 @@ export function CreateAccount() {
             label={
               postizReady
                 ? "Postiz is ready"
-                : "Waiting for Postiz to start..."
+                : healthTimedOut
+                  ? "Postiz did not respond after ~3 minutes"
+                  : "Waiting for Postiz to start..."
             }
             detail={postizReady ? localUrl : undefined}
           />
+
+          {healthTimedOut && (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setHealthTimedOut(false);
+                setChecking(true);
+                setRetryCount((c) => c + 1);
+              }}
+            >
+              Retry
+            </Button>
+          )}
 
           {postizReady && (
             <>

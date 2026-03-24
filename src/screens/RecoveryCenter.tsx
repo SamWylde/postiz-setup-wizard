@@ -41,6 +41,8 @@ export function RecoveryCenter({
   const [showCleanConfirm, setShowCleanConfirm] = useState(false);
   const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [showReconnectInput, setShowReconnectInput] = useState(false);
+  const [reconnectConfig, setReconnectConfig] = useState("");
   const displayedStep = Math.min(snapshot.current_step, 5) + 1;
 
   const installPath = snapshot.install_path ?? "";
@@ -72,10 +74,22 @@ export function RecoveryCenter({
     }
   };
 
+  const needsReconnectConfig = tunnelProvider === "ngrok" || tunnelProvider === "pinggy";
+
+  const handleReconnectTunnelClick = () => {
+    if (needsReconnectConfig) {
+      setShowReconnectInput(true);
+    } else {
+      handleReconnectTunnel();
+    }
+  };
+
   const handleReconnectTunnel = async () => {
+    setShowReconnectInput(false);
     setReconnecting(true);
     try {
-      const url = await reconnectTunnel(snapshot.port, installPath, tunnelProvider);
+      const url = await reconnectTunnel(snapshot.port, installPath, tunnelProvider, reconnectConfig || undefined);
+      setReconnectConfig("");
       await refreshSnapshot();
       await saveResumeState().catch(() => {});
       showToast(`Tunnel connected: ${url}`, "success");
@@ -261,15 +275,49 @@ export function RecoveryCenter({
               </p>
             </div>
           </div>
-          <div className="mt-auto">
-            <Button
-              variant="secondary"
-              onClick={handleReconnectTunnel}
-              loading={reconnecting}
-              disabled={snapshot.tunnel_mode !== "temporary" || !installPath}
-            >
-              Reconnect
-            </Button>
+          <div className="mt-auto space-y-3">
+            {showReconnectInput && (
+              <div>
+                <p className="text-xs text-gray-500 mb-2">
+                  {tunnelProvider === "ngrok" ? "ngrok authtoken" : "Pinggy token"} (optional)
+                </p>
+                <input
+                  type="password"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 mb-2"
+                  placeholder={tunnelProvider === "ngrok" ? "ngrok authtoken" : "Pinggy token"}
+                  value={reconnectConfig}
+                  onChange={(e) => setReconnectConfig(e.target.value)}
+                />
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="primary"
+                    onClick={handleReconnectTunnel}
+                    loading={reconnecting}
+                  >
+                    Reconnect
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setShowReconnectInput(false);
+                      setReconnectConfig("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+            {!showReconnectInput && (
+              <Button
+                variant="secondary"
+                onClick={handleReconnectTunnelClick}
+                loading={reconnecting}
+                disabled={snapshot.tunnel_mode !== "temporary" || !installPath}
+              >
+                Reconnect{tunnelProvider ? ` (${tunnelProvider})` : ""}
+              </Button>
+            )}
           </div>
         </Card>
 

@@ -1,11 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fs;
 use std::io::{Read as IoRead, Write as IoWrite};
 use std::path::PathBuf;
 use std::process::Command;
 use tauri::{Emitter, State};
 
+use crate::commands::env_file::parse_env_file;
 use crate::state::SharedState;
 
 // --- Types ---
@@ -146,22 +146,6 @@ fn discover_all_volumes() -> Result<Vec<(VolumeEntry, String)>, String> {
     Ok(results)
 }
 
-// --- Env file parsing (reuse pattern from env_file.rs) ---
-
-fn parse_env_file(contents: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for line in contents.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = line.split_once('=') {
-            map.insert(key.trim().to_string(), value.trim().to_string());
-        }
-    }
-    map
-}
-
 fn rewrite_env_urls(contents: &str, new_port: u16) -> String {
     let base_url = format!("http://localhost:{}", new_port);
     let backend_url = format!("{}/api", base_url);
@@ -218,7 +202,7 @@ pub async fn export_clone(
 
     // Get state info for manifest
     let (port, tunnel_mode, tunnel_provider, providers) = {
-        let app_state = state.lock().map_err(|e| format!("State lock failed: {}", e))?;
+        let app_state = state.lock().unwrap_or_else(|e| e.into_inner());
         (
             app_state.port,
             app_state.tunnel_mode.clone(),
@@ -258,57 +242,7 @@ pub async fn export_clone(
         let _ = fs::remove_dir_all(&temp_dir_cleanup);
     });
 
-    let mut volume_tars: Vec<(VolumeEntry, Vec<u8>)> = Vec::new();
-
-    for (idx, (entry, actual_name)) in volumes.iter().enumerate() {
-        emit_progress(
-            &app,
-            "backing_up",
-            &format!("Backing up volume: {} ({}/{})", entry.service, idx + 1, volume_count),
-            Some(idx as u32 + 1),
-            Some(volume_count),
-        );
-
-        let tar_name = &entry.archive_name;
-        let tar_path = temp_dir.join(tar_name);
-
-        // Use docker run to tar the volume contents
-        let output = Command::new("docker")
-            .args([
-                "run", "--rm",
-                "-v", &format!("{}:/source:ro", actual_name),
-                "-v", &format!("{}:/backup", temp_dir.to_string_lossy()),
-                "alpine",
-                "tar", "cf", &format!("/backup/{}", tar_name), "-C", "/source", ".",
-            ])
-            .output()
-            .map_err(|e| format!("Failed to backup volume {}: {}", actual_name, e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Volume backup failed for {}: {}", actual_name, stderr));
-        }
-
-        let tar_bytes = fs::read(&tar_path)
-            .map_err(|e| format!("Failed to read tar file {}: {}", tar_name, e))?;
-
-        volume_tars.push((entry.clone(), tar_bytes));
-    }
-
-    // Check total size and warn if large
-    let total_bytes: usize = volume_tars.iter().map(|(_, b)| b.len()).sum();
-    let total_mb = total_bytes / (1024 * 1024);
-    if total_mb > 2048 {
-        emit_progress(
-            &app,
-            "backing_up",
-            &format!("Warning: backup is ~{}MB. This may take a while and use significant memory.", total_mb),
-            None,
-            None,
-        );
-    }
-
-    // Step 4: Build zip archive in memory
+    // Step 4: Build zip archive in memory, streaming each volume directly
     emit_progress(&app, "encrypting", "Building archive...", None, None);
 
     let mut zip_buffer = Vec::new();
@@ -316,6 +250,9 @@ pub async fn export_clone(
         let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut zip_buffer));
         let options = zip::write::SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Deflated);
+
+        // Collect volume entries for the manifest
+        let volume_entries: Vec<VolumeEntry> = volumes.iter().map(|(e, _)| e.clone()).collect();
 
         // Build manifest
         let hostname = hostname::get()
@@ -331,7 +268,7 @@ pub async fn export_clone(
             tunnel_mode,
             tunnel_provider,
             providers_configured: providers,
-            volumes: volume_tars.iter().map(|(e, _)| e.clone()).collect(),
+            volumes: volume_entries,
         };
 
         let manifest_json = serde_json::to_string_pretty(&manifest)
@@ -363,13 +300,49 @@ pub async fn export_clone(
             }
         }
 
-        // Add volume tars
-        for (entry, tar_bytes) in &volume_tars {
+        // Stream each volume tar directly into the zip (one at a time, not all in memory)
+        for (idx, (entry, actual_name)) in volumes.iter().enumerate() {
+            emit_progress(
+                &app,
+                "backing_up",
+                &format!("Backing up volume: {} ({}/{})", entry.service, idx + 1, volume_count),
+                Some(idx as u32 + 1),
+                Some(volume_count),
+            );
+
+            let tar_name = &entry.archive_name;
+            let tar_path = temp_dir.join(tar_name);
+
+            // Use docker run to tar the volume contents to a temp file on disk
+            let output = Command::new("docker")
+                .args([
+                    "run", "--rm",
+                    "-v", &format!("{}:/source:ro", actual_name),
+                    "-v", &format!("{}:/backup", temp_dir.to_string_lossy()),
+                    "alpine",
+                    "tar", "cf", &format!("/backup/{}", tar_name), "-C", "/source", ".",
+                ])
+                .output()
+                .map_err(|e| format!("Failed to backup volume {}: {}", actual_name, e))?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!("Volume backup failed for {}: {}", actual_name, stderr));
+            }
+
+            // Stream from disk into the zip, then delete the temp tar
             let zip_path = format!("volumes/{}", entry.archive_name);
             zip.start_file(&zip_path, options)
                 .map_err(|e| format!("Failed to add {} to zip: {}", zip_path, e))?;
-            zip.write_all(tar_bytes)
-                .map_err(|e| format!("Failed to write {} bytes: {}", zip_path, e))?;
+
+            let mut tar_file = fs::File::open(&tar_path)
+                .map_err(|e| format!("Failed to open tar file {}: {}", tar_name, e))?;
+            std::io::copy(&mut tar_file, &mut zip)
+                .map_err(|e| format!("Failed to stream {} into zip: {}", tar_name, e))?;
+            drop(tar_file);
+
+            // Remove temp tar immediately to free disk space
+            let _ = fs::remove_file(&tar_path);
         }
 
         zip.finish()
@@ -494,16 +467,21 @@ pub async fn import_clone(
         }
         cp
     } else {
-        let mut p = 4007u16;
-        loop {
+        const PORT_RANGE_START: u16 = 4007;
+        const PORT_RANGE_END: u16 = 5007;
+        let mut found_port = None;
+        for p in PORT_RANGE_START..=PORT_RANGE_END {
             if std::net::TcpListener::bind(("127.0.0.1", p)).is_ok() {
-                break p;
-            }
-            p += 1;
-            if p == 0 {
-                return Err("Could not find a free port.".to_string());
+                found_port = Some(p);
+                break;
             }
         }
+        found_port.ok_or_else(|| {
+            format!(
+                "Could not find a free port in range {}-{}. Free up a port or specify one manually.",
+                PORT_RANGE_START, PORT_RANGE_END
+            )
+        })?
     };
 
     // Preflight: install path
@@ -740,7 +718,7 @@ pub async fn import_clone(
 
     // Step 10: Update state
     {
-        let mut app_state = state.lock().map_err(|e| format!("State lock failed: {}", e))?;
+        let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
         app_state.install_path = Some(install_dir.clone());
         app_state.port = port;
         app_state.local_url = Some(format!("http://localhost:{}", port));
@@ -761,11 +739,14 @@ pub async fn import_clone(
         .unwrap_or_else(|| PathBuf::from("."))
         .join("Postiz");
     let _ = fs::create_dir_all(&pointer_dir);
+    let pointer_path = pointer_dir.join("install-pointer.json");
     let pointer = serde_json::json!({ "install_path": install_path });
-    let _ = fs::write(
-        pointer_dir.join("install-pointer.json"),
-        serde_json::to_string_pretty(&pointer).unwrap_or_default(),
-    );
+    let content = serde_json::to_string_pretty(&pointer).unwrap_or_default();
+    let tmp = pointer_path.with_extension("tmp");
+    fs::write(&tmp, &content)
+        .map_err(|e| format!("Failed to write install pointer: {}", e))?;
+    fs::rename(&tmp, &pointer_path)
+        .map_err(|e| format!("Failed to rename install pointer: {}", e))?;
 
     // Disable cleanup — import succeeded
     should_cleanup.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -776,11 +757,3 @@ pub async fn import_clone(
     Ok(serde_json::json!({ "port": port }).to_string())
 }
 
-// --- Clear Transfer Review ---
-
-#[tauri::command]
-pub fn clear_transfer_review(state: State<SharedState>) -> Result<(), String> {
-    let mut app_state = state.lock().map_err(|e| format!("State lock failed: {}", e))?;
-    app_state.transfer_review_pending = false;
-    Ok(())
-}

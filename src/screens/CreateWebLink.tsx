@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useWizardStore } from "../store/wizardStore";
 import {
   startTunnel,
+  stopTunnel,
   updateBaseUrls,
   restartAndVerify,
   saveResumeState,
@@ -31,6 +32,12 @@ interface ProviderOption {
   installAction: BootstrapAction | null;
 }
 
+// ── Magic-number timeouts extracted as named constants ──────────────
+const TUNNEL_VERIFY_DELAY_MS = 10_000;
+const REMOTE_FETCH_TIMEOUT_MS = 10_000;
+const DOMAIN_FETCH_TIMEOUT_MS = 10_000;
+const TUNNEL_START_TIMEOUT_MS = 90_000;
+
 const PROVIDER_WARNINGS: Record<TunnelProvider, string> = {
   cloudflared: "This link changes every time you restart this app.",
   ngrok: "Free tier has request limits. Upgrade for a stable URL.",
@@ -56,6 +63,8 @@ export function CreateWebLink() {
     setStep,
     machineState,
     setMachineState,
+    providers,
+    setProviderStatus,
   } = useWizardStore();
   const [statusMessage, setStatusMessage] = useState("");
   const [domainApplied, setDomainApplied] = useState(false);
@@ -64,10 +73,17 @@ export function CreateWebLink() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [providerConfig, setProviderConfig] = useState("");
   const [installing, setInstalling] = useState<string | null>(null);
+  const [switchingLocal, setSwitchingLocal] = useState(false);
   const mountedRef = useRef(true);
+  const tunnelStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    return () => { mountedRef.current = false; };
+    return () => {
+      mountedRef.current = false;
+      if (tunnelStartTimeoutRef.current) {
+        clearTimeout(tunnelStartTimeoutRef.current);
+      }
+    };
   }, []);
 
   // Rescan machine state on mount so provider availability is up to date
@@ -146,15 +162,41 @@ export function CreateWebLink() {
     setInstalling(null);
   };
 
+  const handleCancelTunnel = () => {
+    if (tunnelStartTimeoutRef.current) {
+      clearTimeout(tunnelStartTimeoutRef.current);
+      tunnelStartTimeoutRef.current = null;
+    }
+    stopTunnel().catch(() => {});
+    setTunnelStatus("idle");
+    setStatusMessage("Tunnel start cancelled.");
+  };
+
   const handleStartTunnel = async () => {
     setTunnelMode("temporary");
     setTunnelStatus("starting");
     setStatusMessage("Starting secure tunnel...");
 
+    // Auto-timeout: if the tunnel hasn't progressed past "starting" in time, error out
+    if (tunnelStartTimeoutRef.current) clearTimeout(tunnelStartTimeoutRef.current);
+    tunnelStartTimeoutRef.current = setTimeout(() => {
+      if (!mountedRef.current) return;
+      const current = useWizardStore.getState().tunnelStatus;
+      if (current === "starting") {
+        setTunnelStatus("error");
+        setStatusMessage("Tunnel start timed out. Try again or choose a different provider.");
+      }
+    }, TUNNEL_START_TIMEOUT_MS);
+
     try {
       const config = providerConfig.trim() || undefined;
       const url = await startTunnel(port, tunnelProvider, config);
       if (!mountedRef.current) return;
+      // Clear the start timeout — tunnel has progressed past "starting"
+      if (tunnelStartTimeoutRef.current) {
+        clearTimeout(tunnelStartTimeoutRef.current);
+        tunnelStartTimeoutRef.current = null;
+      }
       setTunnelUrl(url);
       setTunnelStatus("restarting");
       setStatusMessage("Updating Postiz configuration...");
@@ -165,13 +207,13 @@ export function CreateWebLink() {
 
       setStatusMessage("Verifying remote access...");
 
-      await new Promise((r) => setTimeout(r, 10000));
+      await new Promise((r) => setTimeout(r, TUNNEL_VERIFY_DELAY_MS));
       if (!mountedRef.current) return;
 
       try {
         await fetch(url, {
           mode: "no-cors",
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(REMOTE_FETCH_TIMEOUT_MS),
         });
         if (!mountedRef.current) return;
         setRemoteReachable(true);
@@ -186,6 +228,10 @@ export function CreateWebLink() {
         );
       }
     } catch (err) {
+      if (tunnelStartTimeoutRef.current) {
+        clearTimeout(tunnelStartTimeoutRef.current);
+        tunnelStartTimeoutRef.current = null;
+      }
       if (!mountedRef.current) return;
       setTunnelStatus("error");
       setStatusMessage(friendlyError(String(err)));
@@ -204,8 +250,37 @@ export function CreateWebLink() {
     }
     try {
       const parsed = new URL(domain);
-      if (!parsed.hostname.includes(".")) {
+      const hostname = parsed.hostname;
+
+      if (!hostname.includes(".")) {
         setStatusMessage("Please enter a valid domain (e.g. https://postiz.example.com).");
+        return;
+      }
+
+      // Reject IP addresses (all parts between dots are numeric)
+      const parts = hostname.split(".");
+      const looksLikeIp = parts.every((p) => /^\d+$/.test(p));
+      if (looksLikeIp) {
+        setStatusMessage("Please use a domain name, not an IP address.");
+        return;
+      }
+
+      // Reject trailing dots (e.g. "example.com.")
+      if (hostname.endsWith(".")) {
+        setStatusMessage("Domain must not end with a trailing dot.");
+        return;
+      }
+
+      // Reject double dots (e.g. "example..com")
+      if (hostname.includes("..")) {
+        setStatusMessage("Domain contains consecutive dots — please check for typos.");
+        return;
+      }
+
+      // Require at least a 2-character TLD
+      const tld = parts[parts.length - 1];
+      if (tld.length < 2) {
+        setStatusMessage("Domain must have a valid TLD (at least 2 characters).");
         return;
       }
     } catch {
@@ -230,7 +305,7 @@ export function CreateWebLink() {
       try {
         await fetch(domain, {
           mode: "no-cors",
-          signal: AbortSignal.timeout(10000),
+          signal: AbortSignal.timeout(DOMAIN_FETCH_TIMEOUT_MS),
         });
         reachable = true;
         setStatusMessage("Domain applied and verified!");
@@ -248,8 +323,51 @@ export function CreateWebLink() {
     }
   };
 
-  const handleChooseLocalOnly = () => {
-    setTunnelMode("none");
+  const configuredProviders = Object.entries(providers).filter(
+    ([, status]) => status === "configured",
+  );
+
+  const handleChooseLocalOnly = async () => {
+    setSwitchingLocal(true);
+    setStatusMessage("Switching to local-only mode...");
+
+    try {
+      // Rewrite env file to use localhost URLs
+      await updateBaseUrls(installPath, `http://localhost:${port}`);
+
+      // Kill any running tunnel process
+      try {
+        await stopTunnel();
+      } catch {
+        // Tunnel may not be running — that's fine
+      }
+
+      // Restart Docker with the new env
+      setStatusMessage("Restarting Postiz with local configuration...");
+      await restartAndVerify(installPath);
+      if (!mountedRef.current) return;
+
+      // Mark configured providers as stale since localhost won't work for OAuth
+      if (configuredProviders.length > 0) {
+        for (const [providerName] of configuredProviders) {
+          setProviderStatus(providerName, "stale");
+        }
+      }
+
+      setTunnelMode("none");
+      setTunnelUrl(null);
+      setTunnelStatus("idle");
+      setStatusMessage("");
+
+      await saveResumeState();
+    } catch (err) {
+      if (!mountedRef.current) return;
+      setStatusMessage(friendlyError(String(err)));
+    } finally {
+      if (mountedRef.current) {
+        setSwitchingLocal(false);
+      }
+    }
   };
 
   const isActive = tunnelStatus === "running" && tunnelUrl;
@@ -393,6 +511,12 @@ export function CreateWebLink() {
               label={statusMessage}
             />
 
+            {tunnelStatus === "starting" && (
+              <Button variant="secondary" onClick={handleCancelTunnel}>
+                Cancel
+              </Button>
+            )}
+
             {tunnelUrl && (
               <CopyField value={tunnelUrl} label="Your web link" />
             )}
@@ -440,6 +564,18 @@ export function CreateWebLink() {
               organize content, but connecting social media accounts requires a
               public URL.
             </p>
+            {configuredProviders.length > 0 && (
+              <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                <div className="text-sm text-amber-800">
+                  <p className="font-medium mb-1">Social integrations unavailable</p>
+                  <p>
+                    You previously configured {configuredProviders.length}{" "}
+                    {configuredProviders.length === 1 ? "provider" : "providers"} ({configuredProviders.map(([name]) => name).join(", ")}). OAuth callbacks require a public URL, so these integrations won't work in local-only mode. Create a web link to re-enable them.
+                  </p>
+                </div>
+              </div>
+            )}
             <p className="text-sm text-gray-500">
               You can set up a web link later by coming back to this step.
             </p>
@@ -469,10 +605,13 @@ export function CreateWebLink() {
                 </span>
                 .
               </p>
-              <Button variant="ghost" onClick={handleChooseLocalOnly}>
+              <Button variant="ghost" onClick={handleChooseLocalOnly} disabled={switchingLocal} loading={switchingLocal}>
                 <Monitor className="h-4 w-4" />
-                Use locally only
+                {switchingLocal ? "Switching to local..." : "Use locally only"}
               </Button>
+              {switchingLocal && (
+                <StatusIndicator status="loading" label={statusMessage} />
+              )}
             </div>
           )}
 
@@ -590,7 +729,8 @@ export function CreateWebLink() {
         loading={
           tunnelStatus === "starting" ||
           tunnelStatus === "restarting" ||
-          applyingDomain
+          applyingDomain ||
+          switchingLocal
         }
         onNext={() => setStep(4)}
       />

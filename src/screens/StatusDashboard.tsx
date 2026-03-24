@@ -10,8 +10,12 @@ import {
   checkForUpdate,
   installUpdate,
   getCurrentAppVersion,
+  checkPostizUpdate,
+  upgradePostiz,
+  onUpgradeProgress,
   type InstallSnapshot,
   type UpdateInfo,
+  type PostizUpdateInfo,
 } from "../lib/tauri";
 import { useWizardStore } from "../store/wizardStore";
 import { open } from "@tauri-apps/plugin-shell";
@@ -39,6 +43,7 @@ import {
   ArrowRight,
   CloudDownload,
   CheckCircle2,
+  Package,
 } from "lucide-react";
 
 const POLL_INTERVAL = 15_000;
@@ -91,10 +96,16 @@ export function StatusDashboard() {
   const [exporting, setExporting] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [showReconnectDialog, setShowReconnectDialog] = useState(false);
+  const [reconnectConfig, setReconnectConfig] = useState("");
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
   const [appVersion, setAppVersion] = useState<string>("");
+  const [postizUpdate, setPostizUpdate] = useState<PostizUpdateInfo | null>(null);
+  const [postizChecking, setPostizChecking] = useState(false);
+  const [postizUpgrading, setPostizUpgrading] = useState(false);
+  const [upgradeStatus, setUpgradeStatus] = useState("");
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const localUrl = `http://localhost:${port}`;
@@ -126,6 +137,48 @@ export function StatusDashboard() {
       unlisten.then((f) => f()).catch(() => {});
     };
   }, []);
+
+  // Listen for upgrade progress events
+  useEffect(() => {
+    const unlisten = onUpgradeProgress((event) => {
+      setUpgradeStatus(event.payload.message);
+    });
+    return () => {
+      unlisten.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
+  const handleCheckPostizUpdate = async () => {
+    setPostizChecking(true);
+    try {
+      const info = await checkPostizUpdate();
+      setPostizUpdate(info);
+      if (!info.update_available) {
+        showToast("Postiz is already up to date.", "success");
+      }
+    } catch (err) {
+      showToast(`Check failed: ${String(err)}`, "error");
+    } finally {
+      setPostizChecking(false);
+    }
+  };
+
+  const handleUpgradePostiz = async () => {
+    setPostizUpgrading(true);
+    setUpgradeStatus("Starting upgrade...");
+    try {
+      await upgradePostiz();
+      await fetchSnapshot();
+      setPostizUpdate(null);
+      setUpgradeStatus("");
+      showToast("Postiz upgraded successfully!", "success");
+    } catch (err) {
+      showToast(`Upgrade failed: ${String(err)}`, "error");
+      setUpgradeStatus("");
+    } finally {
+      setPostizUpgrading(false);
+    }
+  };
 
   const handleCheckForUpdate = async () => {
     setUpdateChecking(true);
@@ -192,11 +245,23 @@ export function StatusDashboard() {
     }
   };
 
+  const needsReconnectConfig = tunnelProvider === "ngrok" || tunnelProvider === "pinggy";
+
+  const handleReconnectTunnelClick = () => {
+    if (needsReconnectConfig) {
+      setShowReconnectDialog(true);
+    } else {
+      handleReconnectTunnel();
+    }
+  };
+
   const handleReconnectTunnel = async () => {
+    setShowReconnectDialog(false);
     setReconnecting(true);
     try {
       const previousUrl = snapshot?.tunnel_url;
-      const url = await reconnectTunnel(port, installPath, tunnelProvider);
+      const url = await reconnectTunnel(port, installPath, tunnelProvider, reconnectConfig || undefined);
+      setReconnectConfig("");
       await fetchSnapshot();
       // If the URL changed, mark all configured providers as stale
       if (previousUrl && url !== previousUrl) {
@@ -421,6 +486,62 @@ export function StatusDashboard() {
         )}
       </Card>
 
+      {/* Postiz Version / Upgrade section */}
+      <Card className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <Package className="h-4 w-4 text-gray-500" />
+          <h3 className="text-sm font-medium text-gray-700">Postiz Version</h3>
+        </div>
+        <div className="flex items-center justify-between">
+          <div>
+            {postizUpdate?.update_available ? (
+              <p className="text-sm text-green-600">
+                A newer Postiz app image is available. This upgrades only the Postiz app container — databases and other services are not affected.
+              </p>
+            ) : postizUpdate && !postizUpdate.update_available ? (
+              <p className="text-sm text-gray-500 flex items-center gap-1">
+                <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+                Postiz app image is up to date
+              </p>
+            ) : (
+              <p className="text-sm text-gray-500">
+                Check if a newer Postiz app container image is available. Upgrades only the Postiz app — other services stay untouched.
+              </p>
+            )}
+            {postizUpgrading && upgradeStatus && (
+              <p className="text-xs text-blue-600 mt-1">{upgradeStatus}</p>
+            )}
+          </div>
+          <div className="flex gap-2">
+            {postizUpdate?.update_available ? (
+              <Button
+                onClick={handleUpgradePostiz}
+                loading={postizUpgrading}
+              >
+                Upgrade Postiz
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                onClick={handleCheckPostizUpdate}
+                loading={postizChecking}
+              >
+                Check for Updates
+              </Button>
+            )}
+          </div>
+        </div>
+        {postizUpdate?.update_available && (
+          <div className="mt-3 pt-3 border-t border-gray-100 space-y-2">
+            <div className="rounded bg-amber-50 px-3 py-2">
+              <p className="text-xs text-amber-700">
+                <strong>Before upgrading:</strong> Consider exporting a full backup using the button below. The upgrade will pull the latest Postiz app image and recreate only the Postiz container — databases and other services are not restarted. If the new version fails health checks, it will automatically roll back to the previous image.
+              </p>
+            </div>
+          </div>
+        )}
+      </Card>
+
       {/* Info section */}
       <Card className="mb-6">
         <div className="flex items-center gap-2 mb-3">
@@ -529,11 +650,11 @@ export function StatusDashboard() {
         {snapshot?.tunnel_mode === "temporary" && !snapshot?.tunnel_alive && (
           <Button
             variant="secondary"
-            onClick={handleReconnectTunnel}
+            onClick={handleReconnectTunnelClick}
             loading={reconnecting}
           >
             <Globe className="h-4 w-4" />
-            Reconnect Web Link
+            Reconnect Web Link{tunnelProvider ? ` (${tunnelProvider})` : ""}
           </Button>
         )}
 
@@ -558,6 +679,38 @@ export function StatusDashboard() {
           Minimize to Tray
         </Button>
       </div>
+
+      {showReconnectDialog && (
+        <Card className="mb-6">
+          <h4 className="text-sm font-medium text-gray-700 mb-2">
+            {tunnelProvider === "ngrok" ? "ngrok Authtoken" : "Pinggy Token"} (optional)
+          </h4>
+          <p className="text-xs text-gray-500 mb-3">
+            Provide your {tunnelProvider === "ngrok" ? "ngrok authtoken" : "Pinggy token"} to reconnect, or leave blank to attempt without it.
+          </p>
+          <input
+            type="password"
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 mb-3"
+            placeholder={tunnelProvider === "ngrok" ? "ngrok authtoken" : "Pinggy token"}
+            value={reconnectConfig}
+            onChange={(e) => setReconnectConfig(e.target.value)}
+          />
+          <div className="flex items-center gap-2">
+            <Button variant="primary" onClick={handleReconnectTunnel}>
+              Reconnect
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setShowReconnectDialog(false);
+                setReconnectConfig("");
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </Card>
+      )}
 
       {showExport && (
         <div className="mb-6">

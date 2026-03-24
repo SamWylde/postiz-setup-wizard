@@ -8,9 +8,7 @@ pub async fn export_diagnostics(
     state: State<'_, SharedState>,
 ) -> Result<String, String> {
     let (install_path, port, tunnel_mode, tunnel_url, providers_configured, providers_stale, current_step) = {
-        let s = state
-            .lock()
-            .map_err(|e| format!("State lock failed: {}", e))?;
+        let s = state.lock().unwrap_or_else(|e| e.into_inner());
         (
             s.install_path.clone(),
             s.port,

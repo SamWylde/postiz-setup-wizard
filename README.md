@@ -19,9 +19,11 @@
 ### After Setup
 - **System tray app** — Keeps your tunnel running and services monitored in the background
 - **Live dashboard** — Container health, tunnel status, and overall system health at a glance
-- **Auto-updates** — Checks for new versions and installs them with one click
+- **One-click upgrades** — Upgrade Postiz to the latest version with automatic rollback on failure
+- **Clone & transfer** — Export your entire installation (config, database, volumes) as an encrypted archive and import it on another machine
+- **Auto-updates** — Checks for new wizard versions and installs them with one click
 - **Docker log viewer** — View container logs without opening a terminal
-- **Diagnostics export** — One-click export for troubleshooting
+- **Diagnostics export** — One-click export for troubleshooting (with automatic secret redaction)
 - **Recovery center** — Detects problems on startup and offers guided repair
 
 ### Supported Social Platforms
@@ -87,8 +89,8 @@ Versions are defined in three files that **must** stay in sync:
 To release, update all three, commit, then push a tag:
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 GitHub Actions will build the installer, sign it, create a GitHub Release with the `.exe`, `.msi`, and updater manifest (`latest.json`). Existing installations will detect the new version automatically.

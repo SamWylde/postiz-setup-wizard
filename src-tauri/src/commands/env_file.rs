@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tauri::{Emitter, State};
 
 use crate::state::SharedState;
 
-fn parse_env_file(contents: &str) -> HashMap<String, String> {
+pub fn parse_env_file(contents: &str) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for line in contents.lines() {
         let line = line.trim();
@@ -20,7 +20,7 @@ fn parse_env_file(contents: &str) -> HashMap<String, String> {
     map
 }
 
-fn write_env_file(path: &PathBuf, updates: &HashMap<String, String>) -> Result<(), String> {
+fn write_env_file(path: &Path, updates: &HashMap<String, String>) -> Result<(), String> {
     let contents = fs::read_to_string(path)
         .map_err(|e| format!("Failed to read env file: {}", e))?;
 
@@ -58,8 +58,12 @@ fn write_env_file(path: &PathBuf, updates: &HashMap<String, String>) -> Result<(
         }
     }
 
-    fs::write(path, new_lines.join("\n"))
-        .map_err(|e| format!("Failed to write env file: {}", e))?;
+    let content = new_lines.join("\n") + "\n";
+    let tmp = path.with_extension("env.tmp");
+    fs::write(&tmp, &content)
+        .map_err(|e| format!("Failed to write temp env file: {}", e))?;
+    fs::rename(&tmp, path)
+        .map_err(|e| format!("Failed to rename temp env file: {}", e))?;
 
     Ok(())
 }
@@ -70,7 +74,7 @@ pub fn stage_provider_config(
     entries: HashMap<String, String>,
     state: State<SharedState>,
 ) -> Result<String, String> {
-    let mut app_state = state.lock().map_err(|e| format!("State lock failed: {}", e))?;
+    let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
 
     // Stage the changes (don't write to disk yet)
     // Provider is NOT marked as configured until apply succeeds.
@@ -87,7 +91,7 @@ pub fn apply_provider_changes(path: String, state: State<SharedState>) -> Result
     let env_path = install_path.join("postiz.env");
 
     let pending = {
-        let app_state = state.lock().map_err(|e| format!("State lock failed: {}", e))?;
+        let app_state = state.lock().unwrap_or_else(|e| e.into_inner());
         app_state.pending_env_changes.clone()
     };
 
@@ -99,9 +103,7 @@ pub fn apply_provider_changes(path: String, state: State<SharedState>) -> Result
     write_env_file(&env_path, &pending)?;
 
     // Now that the write succeeded, clear pending changes
-    if let Ok(mut app_state) = state.lock() {
-        app_state.pending_env_changes.clear();
-    }
+    state.lock().unwrap_or_else(|e| e.into_inner()).pending_env_changes.clear();
 
     Ok(format!("Applied {} env changes.", pending.len()))
 }
@@ -145,9 +147,7 @@ pub async fn apply_config_transaction(
 
     // Get pending changes from state (clone, don't clear yet)
     let (pending, port) = {
-        let app_state = state
-            .lock()
-            .map_err(|e| format!("State lock failed: {}", e))?;
+        let app_state = state.lock().unwrap_or_else(|e| e.into_inner());
         (app_state.pending_env_changes.clone(), app_state.port)
     };
 
@@ -179,7 +179,7 @@ pub async fn apply_config_transaction(
 
     // Restart stack: docker compose down
     let output = Command::new("docker")
-        .args(["compose", "down"])
+        .args(["compose", "--env-file", "postiz.env", "down"])
         .current_dir(&install_path)
         .output()
         .map_err(|e| format!("Failed to stop stack: {}", e))?;
@@ -214,7 +214,7 @@ pub async fn apply_config_transaction(
             ));
         }
         let _ = Command::new("docker")
-            .args(["compose", "down"])
+            .args(["compose", "--env-file", "postiz.env", "down"])
             .current_dir(&install_path)
             .output();
         let _ = Command::new("docker")
@@ -241,9 +241,7 @@ pub async fn apply_config_transaction(
 
     if healthy {
         // Clear pending changes from state
-        if let Ok(mut app_state) = state.lock() {
-            app_state.pending_env_changes.clear();
-        }
+        state.lock().unwrap_or_else(|e| e.into_inner()).pending_env_changes.clear();
         let _ = app.emit("docker-progress", "Config applied successfully!");
         Ok(format!(
             "Applied {} config changes successfully.",
@@ -261,7 +259,7 @@ pub async fn apply_config_transaction(
 
         // Restart stack with old config
         let _ = Command::new("docker")
-            .args(["compose", "down"])
+            .args(["compose", "--env-file", "postiz.env", "down"])
             .current_dir(&install_path)
             .output();
 

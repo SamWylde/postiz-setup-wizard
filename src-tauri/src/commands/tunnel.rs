@@ -7,6 +7,8 @@ use tauri::{Emitter, State};
 use crate::commands::bootstrap::resolve_binary;
 use crate::state::{SharedState, TunnelProvider};
 
+use super::sanitize_log_line;
+
 /// How long to wait before first URL poll (seconds).
 const URL_INITIAL_WAIT_SECS: u64 = 10;
 /// How long to wait for a second URL poll attempt (seconds).
@@ -23,6 +25,9 @@ pub struct TunnelStatus {
     pub status: String, // "running", "starting", "stopped", "error"
     pub url: Option<String>,
 }
+
+/// Shared holder for a tunnel URL that may be captured asynchronously.
+type SharedUrl = Arc<std::sync::Mutex<Option<String>>>;
 
 /// Where to capture the tunnel URL from.
 enum UrlSource {
@@ -50,7 +55,7 @@ fn is_pid_alive(pid: u32) -> bool {
 
 /// Kill a tunnel process by PID and clear state.
 fn kill_existing_tunnel(state: &SharedState) {
-    let existing_pid = state.lock().ok().and_then(|s| s.tunnel_pid);
+    let existing_pid = state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid;
     if let Some(pid) = existing_pid {
         if is_pid_alive(pid) {
             let _ = Command::new("taskkill")
@@ -58,10 +63,9 @@ fn kill_existing_tunnel(state: &SharedState) {
                 .output();
         }
     }
-    if let Ok(mut app_state) = state.lock() {
-        app_state.tunnel_url = None;
-        app_state.tunnel_pid = None;
-    }
+    let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
+    app_state.tunnel_url = None;
+    app_state.tunnel_pid = None;
 }
 
 /// Spawn a tunnel process and capture its URL from output or HTTP API.
@@ -72,7 +76,7 @@ fn spawn_tunnel_process(
     env: &[(&str, String)],
     url_source: UrlSource,
     app: &tauri::AppHandle,
-) -> Result<(u32, Arc<std::sync::Mutex<Option<String>>>), String> {
+) -> Result<(u32, SharedUrl), String> {
     let mut command = Command::new(cmd);
     command
         .args(args)
@@ -99,18 +103,14 @@ fn spawn_tunnel_process(
             std::thread::spawn(move || {
                 let reader = BufReader::new(stderr);
                 let url_re = Regex::new(&pattern).expect("hardcoded tunnel URL regex must compile");
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        if let Some(mat) = url_re.find(&line) {
-                            let url = mat.as_str().to_string();
-                            let _ = app_clone.emit("tunnel-url", url.clone());
-                            let _ = app_clone.emit("tunnel-status", "running");
-                            if let Ok(mut u) = url_clone.lock() {
-                                *u = Some(url);
-                            }
-                        }
-                        let _ = app_clone.emit("tunnel-log", line);
+                for line in reader.lines().map_while(Result::ok) {
+                    if let Some(mat) = url_re.find(&line) {
+                        let url = mat.as_str().to_string();
+                        let _ = app_clone.emit("tunnel-url", url.clone());
+                        let _ = app_clone.emit("tunnel-status", "running");
+                        *url_clone.lock().unwrap_or_else(|e| e.into_inner()) = Some(url);
                     }
+                    let _ = app_clone.emit("tunnel-log", sanitize_log_line(&line));
                 }
                 let _ = app_clone.emit("tunnel-status", "stopped");
             });
@@ -125,10 +125,8 @@ fn spawn_tunnel_process(
                 let app_err = app.clone();
                 std::thread::spawn(move || {
                     let reader = BufReader::new(stderr);
-                    for line in reader.lines() {
-                        if let Ok(line) = line {
-                            let _ = app_err.emit("tunnel-log", line);
-                        }
+                    for line in reader.lines().map_while(Result::ok) {
+                        let _ = app_err.emit("tunnel-log", sanitize_log_line(&line));
                     }
                 });
             }
@@ -136,18 +134,14 @@ fn spawn_tunnel_process(
             std::thread::spawn(move || {
                 let reader = BufReader::new(stdout);
                 let url_re = Regex::new(&pattern).expect("hardcoded tunnel URL regex must compile");
-                for line in reader.lines() {
-                    if let Ok(line) = line {
-                        if let Some(mat) = url_re.find(&line) {
-                            let url = mat.as_str().to_string();
-                            let _ = app_clone.emit("tunnel-url", url.clone());
-                            let _ = app_clone.emit("tunnel-status", "running");
-                            if let Ok(mut u) = url_clone.lock() {
-                                *u = Some(url);
-                            }
-                        }
-                        let _ = app_clone.emit("tunnel-log", line);
+                for line in reader.lines().map_while(Result::ok) {
+                    if let Some(mat) = url_re.find(&line) {
+                        let url = mat.as_str().to_string();
+                        let _ = app_clone.emit("tunnel-url", url.clone());
+                        let _ = app_clone.emit("tunnel-status", "running");
+                        *url_clone.lock().unwrap_or_else(|e| e.into_inner()) = Some(url);
                     }
+                    let _ = app_clone.emit("tunnel-log", sanitize_log_line(&line));
                 }
                 let _ = app_clone.emit("tunnel-status", "stopped");
             });
@@ -159,10 +153,8 @@ fn spawn_tunnel_process(
                 let app_clone = app.clone();
                 std::thread::spawn(move || {
                     let reader = BufReader::new(stdout);
-                    for line in reader.lines() {
-                        if let Ok(line) = line {
-                            let _ = app_clone.emit("tunnel-log", line);
-                        }
+                    for line in reader.lines().map_while(Result::ok) {
+                        let _ = app_clone.emit("tunnel-log", sanitize_log_line(&line));
                     }
                 });
             }
@@ -170,10 +162,8 @@ fn spawn_tunnel_process(
                 let app_clone = app.clone();
                 std::thread::spawn(move || {
                     let reader = BufReader::new(stderr);
-                    for line in reader.lines() {
-                        if let Ok(line) = line {
-                            let _ = app_clone.emit("tunnel-log", line);
-                        }
+                    for line in reader.lines().map_while(Result::ok) {
+                        let _ = app_clone.emit("tunnel-log", sanitize_log_line(&line));
                     }
                 });
             }
@@ -185,17 +175,17 @@ fn spawn_tunnel_process(
 
 /// Wait for a URL to appear in the shared holder, with configurable timeouts.
 async fn wait_for_url(
-    state_url: &Arc<std::sync::Mutex<Option<String>>>,
+    state_url: &SharedUrl,
     initial_wait_secs: u64,
     retry_wait_secs: u64,
 ) -> Option<String> {
     tokio::time::sleep(std::time::Duration::from_secs(initial_wait_secs)).await;
-    let captured = state_url.lock().ok().and_then(|u| u.clone());
+    let captured = state_url.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if captured.is_some() {
         return captured;
     }
     tokio::time::sleep(std::time::Duration::from_secs(retry_wait_secs)).await;
-    state_url.lock().ok().and_then(|u| u.clone())
+    state_url.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 /// Poll ngrok's local API to get the tunnel URL.
@@ -243,15 +233,11 @@ async fn start_cloudflared(
         app,
     )?;
 
-    if let Ok(mut s) = state.lock() {
-        s.tunnel_pid = Some(pid);
-    }
+    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = Some(pid);
 
     match wait_for_url(&state_url, URL_INITIAL_WAIT_SECS, URL_RETRY_WAIT_SECS).await {
         Some(url) => {
-            if let Ok(mut s) = state.lock() {
-                s.tunnel_url = Some(url.clone());
-            }
+            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_url = Some(url.clone());
             Ok(url)
         }
         None => {
@@ -259,9 +245,7 @@ async fn start_cloudflared(
             let _ = Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                 .output();
-            if let Ok(mut s) = state.lock() {
-                s.tunnel_pid = None;
-            }
+            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = None;
             Err("Cloudflared started but URL not captured. The process has been stopped — please try again.".to_string())
         }
     }
@@ -298,16 +282,12 @@ async fn start_ngrok(
         app,
     )?;
 
-    if let Ok(mut s) = state.lock() {
-        s.tunnel_pid = Some(pid);
-    }
+    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = Some(pid);
 
     // Poll ngrok API for the tunnel URL
     match poll_ngrok_api("http://localhost:4040/api/tunnels", NGROK_API_POLL_ATTEMPTS).await {
         Some(url) => {
-            if let Ok(mut s) = state.lock() {
-                s.tunnel_url = Some(url.clone());
-            }
+            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_url = Some(url.clone());
             let _ = app.emit("tunnel-url", url.clone());
             let _ = app.emit("tunnel-status", "running");
             Ok(url)
@@ -316,9 +296,7 @@ async fn start_ngrok(
             let _ = Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                 .output();
-            if let Ok(mut s) = state.lock() {
-                s.tunnel_pid = None;
-            }
+            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = None;
             Err("ngrok started but tunnel URL not available. Check your authtoken and try again.".to_string())
         }
     }
@@ -341,24 +319,18 @@ async fn start_zrok(
         app,
     )?;
 
-    if let Ok(mut s) = state.lock() {
-        s.tunnel_pid = Some(pid);
-    }
+    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = Some(pid);
 
     match wait_for_url(&state_url, URL_INITIAL_WAIT_SECS, URL_RETRY_WAIT_SECS).await {
         Some(url) => {
-            if let Ok(mut s) = state.lock() {
-                s.tunnel_url = Some(url.clone());
-            }
+            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_url = Some(url.clone());
             Ok(url)
         }
         None => {
             let _ = Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                 .output();
-            if let Ok(mut s) = state.lock() {
-                s.tunnel_pid = None;
-            }
+            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = None;
             Err("zrok started but URL not captured. Make sure you have run 'zrok enable' first.".to_string())
         }
     }
@@ -399,24 +371,18 @@ async fn start_pinggy(
         app,
     )?;
 
-    if let Ok(mut s) = state.lock() {
-        s.tunnel_pid = Some(pid);
-    }
+    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = Some(pid);
 
     match wait_for_url(&state_url, PINGGY_INITIAL_WAIT_SECS, PINGGY_RETRY_WAIT_SECS).await {
         Some(url) => {
-            if let Ok(mut s) = state.lock() {
-                s.tunnel_url = Some(url.clone());
-            }
+            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_url = Some(url.clone());
             Ok(url)
         }
         None => {
             let _ = Command::new("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                 .output();
-            if let Ok(mut s) = state.lock() {
-                s.tunnel_pid = None;
-            }
+            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = None;
             Err("Pinggy tunnel started but URL not captured. Please try again.".to_string())
         }
     }
@@ -440,9 +406,7 @@ pub async fn start_tunnel(
     let provider_enum = TunnelProvider::from_str_loose(&provider.unwrap_or_default());
 
     // Store provider in state
-    if let Ok(mut s) = state.lock() {
-        s.tunnel_provider = provider_enum.clone();
-    }
+    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_provider = provider_enum.clone();
 
     match provider_enum {
         TunnelProvider::Cloudflared => start_cloudflared(port, &app, &state).await,
@@ -455,9 +419,7 @@ pub async fn start_tunnel(
 #[tauri::command]
 pub async fn stop_tunnel(state: State<'_, SharedState>) -> Result<String, String> {
     let pid = {
-        let s = state
-            .lock()
-            .map_err(|e| format!("State lock failed: {}", e))?;
+        let s = state.lock().unwrap_or_else(|e| e.into_inner());
         s.tunnel_pid
     };
 
@@ -467,7 +429,8 @@ pub async fn stop_tunnel(state: State<'_, SharedState>) -> Result<String, String
             .output();
     }
 
-    if let Ok(mut app_state) = state.lock() {
+    {
+        let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
         app_state.tunnel_url = None;
         app_state.tunnel_pid = None;
     }
@@ -477,12 +440,12 @@ pub async fn stop_tunnel(state: State<'_, SharedState>) -> Result<String, String
 
 #[tauri::command]
 pub fn get_tunnel_status(state: State<SharedState>) -> Result<TunnelStatus, String> {
-    let app_state = state.lock().map_err(|e| format!("State lock failed: {}", e))?;
+    let app_state = state.lock().unwrap_or_else(|e| e.into_inner());
 
     let pid = app_state.tunnel_pid;
     let url = app_state.tunnel_url.clone();
 
-    let alive = pid.map(|p| is_pid_alive(p)).unwrap_or(false);
+    let alive = pid.map(is_pid_alive).unwrap_or(false);
 
     let status = if alive && url.is_some() {
         "running".to_string()
@@ -516,9 +479,7 @@ pub async fn reconnect_tunnel(
 
     let provider_enum = TunnelProvider::from_str_loose(&provider.unwrap_or_default());
 
-    if let Ok(mut s) = state.lock() {
-        s.tunnel_provider = provider_enum.clone();
-    }
+    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_provider = provider_enum.clone();
 
     // Start tunnel with the appropriate provider
     let url = match provider_enum {
@@ -560,8 +521,11 @@ pub async fn reconnect_tunnel(
     if contents.ends_with('\n') {
         result.push('\n');
     }
-    std::fs::write(&env_path, result)
-        .map_err(|e| format!("Failed to write env: {}", e))?;
+    let tmp = env_path.with_extension("env.tmp");
+    std::fs::write(&tmp, &result)
+        .map_err(|e| format!("Failed to write temp env: {}", e))?;
+    std::fs::rename(&tmp, &env_path)
+        .map_err(|e| format!("Failed to rename temp env: {}", e))?;
 
     // Restart Postiz
     let path = std::path::PathBuf::from(&install_path);
@@ -576,9 +540,7 @@ pub async fn reconnect_tunnel(
         .output();
 
     // Update tunnel URL in state so save_resume_state captures it
-    if let Ok(mut s) = state.lock() {
-        s.tunnel_url = Some(url.clone());
-    }
+    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_url = Some(url.clone());
 
     // Emit events
     let _ = app.emit("tunnel-url", url.clone());

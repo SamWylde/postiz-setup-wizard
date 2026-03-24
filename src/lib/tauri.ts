@@ -225,12 +225,35 @@ export const importClone = (
   customPort?: number,
 ) => invoke<string>("import_clone", { clonePath, password, installPath, customPort });
 
-export const clearTransferReview = () =>
-  invoke<void>("clear_transfer_review");
+export const clearTransferReviewAndSave = () =>
+  invoke<void>("clear_transfer_review_and_save");
 
 export const onTransferProgress = (
   callback: (event: { payload: TransferProgress }) => void,
 ): Promise<UnlistenFn> => listen("transfer-progress", callback);
+
+// Upgrade commands
+export interface PostizUpdateInfo {
+  update_available: boolean;
+  local_digest: string;
+  remote_digest: string;
+  image: string;
+}
+
+export interface UpgradeProgress {
+  phase: string;
+  message: string;
+}
+
+export const checkPostizUpdate = () =>
+  invoke<PostizUpdateInfo>("check_postiz_update");
+
+export const upgradePostiz = () =>
+  invoke<string>("upgrade_postiz");
+
+export const onUpgradeProgress = (
+  callback: (event: { payload: UpgradeProgress }) => void,
+): Promise<UnlistenFn> => listen("upgrade-progress", callback);
 
 // Event listeners
 export const onDockerProgress = (

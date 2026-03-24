@@ -2,21 +2,15 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Mutex;
-use tokio::process::Child;
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Default, Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum TunnelProvider {
+    #[default]
     Cloudflared,
     Ngrok,
     Zrok,
     Pinggy,
-}
-
-impl Default for TunnelProvider {
-    fn default() -> Self {
-        Self::Cloudflared
-    }
 }
 
 impl TunnelProvider {
@@ -125,13 +119,11 @@ pub struct PreflightCheck {
     pub message: String,
 }
 
-#[allow(dead_code)]
 pub struct AppState {
     pub install_path: Option<PathBuf>,
     pub port: u16,
     pub local_url: Option<String>,
     pub tunnel_url: Option<String>,
-    pub tunnel_process: Option<Child>,
     pub tunnel_mode: String, // "temporary", "permanent", "none"
     pub tunnel_provider: TunnelProvider,
     pub permanent_domain: Option<String>,
@@ -140,6 +132,7 @@ pub struct AppState {
     pub stale_providers: HashSet<String>,
     pub providers_configured: HashSet<String>,
     pub reboot_pending: Option<String>,
+    #[allow(dead_code)] // Retained for future use (e.g. exposing logs via command)
     pub docker_logs: Vec<String>,
     pub docker_child_pid: Option<u32>,
     pub tunnel_pid: Option<u32>,
@@ -155,7 +148,6 @@ impl Default for AppState {
             port: 4007,
             local_url: None,
             tunnel_url: None,
-            tunnel_process: None,
             tunnel_mode: "none".to_string(),
             tunnel_provider: TunnelProvider::default(),
             permanent_domain: None,

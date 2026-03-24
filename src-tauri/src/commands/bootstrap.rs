@@ -140,7 +140,8 @@ pub fn scan_machine(state: State<SharedState>) -> Result<MachineState, String> {
         .unwrap_or(false);
 
     // Update state with any existing install info
-    if let Ok(mut app_state) = state.lock() {
+    {
+        let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(ref path) = existing_install {
             app_state.install_path = Some(std::path::PathBuf::from(path));
         }

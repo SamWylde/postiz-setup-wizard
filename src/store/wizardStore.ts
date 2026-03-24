@@ -103,6 +103,20 @@ export interface WizardState {
   setTransferReviewPending: (pending: boolean) => void;
   addDockerLog: (log: string) => void;
   clearDockerLogs: () => void;
+
+  /** Silent hydration — sets fields in one call with NO side effects
+   *  (no syncing to Rust, no saving resume state). */
+  hydrateFromResume: (data: {
+    installPath?: string;
+    port?: number;
+    tunnelMode?: WizardState["tunnelMode"];
+    permanentDomain?: string;
+    tunnelProvider?: WizardState["tunnelProvider"];
+    providers?: Record<string, ProviderStatus>;
+    transferReviewPending?: boolean;
+    tunnelUrl?: string | null;
+    tunnelStatus?: WizardState["tunnelStatus"];
+  }) => void;
 }
 
 export const useWizardStore = create<WizardState>((set) => ({
@@ -200,4 +214,18 @@ export const useWizardStore = create<WizardState>((set) => ({
       dockerLogs: [...state.dockerLogs.slice(-499), log],
     })),
   clearDockerLogs: () => set({ dockerLogs: [] }),
+
+  hydrateFromResume: (data) => {
+    const patch: Partial<WizardState> = {};
+    if (data.installPath !== undefined) patch.installPath = data.installPath;
+    if (data.port !== undefined) patch.port = data.port;
+    if (data.tunnelMode !== undefined) patch.tunnelMode = data.tunnelMode;
+    if (data.permanentDomain !== undefined) patch.permanentDomain = data.permanentDomain;
+    if (data.tunnelProvider !== undefined) patch.tunnelProvider = data.tunnelProvider;
+    if (data.providers !== undefined) patch.providers = data.providers;
+    if (data.transferReviewPending !== undefined) patch.transferReviewPending = data.transferReviewPending;
+    if (data.tunnelUrl !== undefined) patch.tunnelUrl = data.tunnelUrl;
+    if (data.tunnelStatus !== undefined) patch.tunnelStatus = data.tunnelStatus;
+    set(patch);
+  },
 }));

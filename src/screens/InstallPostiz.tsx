@@ -19,18 +19,16 @@ import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
 import { FolderOpen } from "lucide-react";
-import { StatusIndicator } from "../components/ui/StatusIndicator";
+import { InstallTimeline, type InstallPhase } from "../components/ui/InstallTimeline";
 import { CollapsiblePanel } from "../components/ui/CollapsiblePanel";
 import { LogViewer } from "../components/ui/LogViewer";
 import { NavigationButtons } from "../components/wizard/NavigationButtons";
 import { ImportClonePanel } from "../components/ImportClonePanel";
 
-function formatElapsed(seconds: number): string {
-  const m = Math.floor(seconds / 60);
-  const s = seconds % 60;
-  if (m === 0) return `${s}s`;
-  return `${m}m ${s}s`;
-}
+const PRE_HEALTH_WAIT_MS = 5_000;
+const HEALTH_POLL_INTERVAL_MS = 3_000;
+const MAX_HEALTH_ATTEMPTS = 60;
+const ELAPSED_TICK_MS = 1_000;
 
 export function InstallPostiz() {
   const {
@@ -49,21 +47,33 @@ export function InstallPostiz() {
     setPostizReady,
   } = useWizardStore();
 
-  const [statusMessage, setStatusMessage] = useState("");
   const [progressDetail, setProgressDetail] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [installPhase, setInstallPhaseState] = useState<InstallPhase>("idle");
+  const [errorPhase, setErrorPhase] = useState<InstallPhase | null>(null);
+  const installPhaseRef = useRef<InstallPhase>("idle");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef = useRef(true);
+
+  const setInstallPhase = (phase: InstallPhase) => {
+    installPhaseRef.current = phase;
+    setInstallPhaseState(phase);
+  };
   const isInstalling = ["preparing", "pulling", "starting"].includes(
     installStatus,
   );
   const isComplete = installStatus === "running";
 
   useEffect(() => {
+    mountedRef.current = true;
     if (!installPath) {
       getDefaultInstallPath().then(setInstallPath).catch(console.error);
     }
+    return () => {
+      mountedRef.current = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -82,7 +92,7 @@ export function InstallPostiz() {
   useEffect(() => {
     if (isInstalling) {
       setElapsed(0);
-      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000);
+      timerRef.current = setInterval(() => setElapsed((e) => e + 1), ELAPSED_TICK_MS);
     } else {
       if (timerRef.current) {
         clearInterval(timerRef.current);
@@ -97,13 +107,14 @@ export function InstallPostiz() {
   const handleInstall = async () => {
     setInstallStatus("preparing");
     setInstallError(null);
-    setStatusMessage("Running pre-flight checks...");
+    setErrorPhase(null);
+    setInstallPhase("preflight");
 
     try {
-      // Run preflight validation — allow existing files at the install path since this
-      // screen is the only place installs are initiated, and retries after failure will
-      // have committed files from a prior attempt already in place.
-      const preflight = await validatePreflight(installPath, port, tunnelMode, true);
+      // Run preflight validation in strict mode — the backend will only allow
+      // existing files at the install path when a .tmp staging folder proves
+      // this wizard created the partial state (i.e. a failed install retry).
+      const preflight = await validatePreflight(installPath, port, tunnelMode, false);
       if (!preflight.ok) {
         const failures = preflight.checks
           .filter((c) => !c.passed)
@@ -111,11 +122,11 @@ export function InstallPostiz() {
           .join("\n");
         setInstallStatus("error");
         setInstallError(failures);
-        setStatusMessage("Pre-flight checks failed.");
+        setErrorPhase("preflight");
         return;
       }
 
-      setStatusMessage("Preparing files...");
+      setInstallPhase("preparing-files");
 
       // prepareInstall returns the actual port used (may differ from requested if default)
       const actualPort = await prepareInstall(
@@ -133,23 +144,26 @@ export function InstallPostiz() {
       await saveResumeState().catch(() => {});
 
       setInstallStatus("pulling");
-      setStatusMessage("Downloading Postiz (this may take several minutes)...");
+      setInstallPhase("pulling");
 
       await startStack(installPath);
 
       setInstallStatus("starting");
-      setStatusMessage("Waiting for services to start...");
+      setInstallPhase("starting-services");
+
+      // Brief pause to let containers initialize before polling health
+      await new Promise((r) => setTimeout(r, PRE_HEALTH_WAIT_MS));
+      setInstallPhase("health-checks");
 
       let attempts = 0;
-      const maxAttempts = 60;
-      while (attempts < maxAttempts) {
-        await new Promise((r) => setTimeout(r, 3000));
+      while (mountedRef.current && attempts < MAX_HEALTH_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
         try {
           const status = await getStackStatus(installPath);
           if (status.all_healthy && status.postiz_responding) {
             setInstallStatus("running");
             setPostizReady(true);
-            setStatusMessage("Postiz is installed and running!");
+            setInstallPhase("ready");
             await saveResumeState().catch(() => {});
             return;
           }
@@ -163,11 +177,11 @@ export function InstallPostiz() {
       setInstallError(
         "Services started but Postiz didn't become healthy within 3 minutes. Check Docker Desktop for container issues, then try again.",
       );
-      setStatusMessage("Installation timed out.");
+      setErrorPhase("health-checks");
     } catch (err) {
       setInstallStatus("error");
       setInstallError(friendlyError(String(err)));
-      setStatusMessage("Installation failed.");
+      setErrorPhase(installPhaseRef.current);
     }
   };
 
@@ -179,7 +193,8 @@ export function InstallPostiz() {
     }
     setInstallStatus("idle");
     setInstallError(null);
-    setStatusMessage("");
+    setInstallPhase("idle");
+    setErrorPhase(null);
   };
 
   if (showImport) {
@@ -279,7 +294,7 @@ export function InstallPostiz() {
             <div className="mt-4 space-y-2">
               <Button
                 onClick={handleInstall}
-                disabled={showAdvanced && (port === 0 || port < 1024 || port > 65535)}
+                disabled={port === 0 || port < 1024 || port > 65535}
               >
                 Install Postiz
               </Button>
@@ -295,40 +310,13 @@ export function InstallPostiz() {
           </>
         ) : (
           <div className="space-y-4">
-            <StatusIndicator
-              status={
-                installStatus === "error"
-                  ? "error"
-                  : isComplete
-                    ? "success"
-                    : "loading"
-              }
-              label={statusMessage}
-              detail={
-                isInstalling
-                  ? `${formatElapsed(elapsed)}${progressDetail ? ` — ${progressDetail}` : ""}`
-                  : undefined
-              }
+            <InstallTimeline
+              currentPhase={installPhase}
+              errorPhase={errorPhase}
+              elapsed={elapsed}
+              progressDetail={progressDetail}
+              errorMessage={installError}
             />
-
-            {installStatus === "pulling" && (
-              <div className="rounded-lg bg-blue-50 p-3">
-                <p className="text-xs text-blue-700">
-                  Downloading Docker images for Postiz, PostgreSQL, Redis,
-                  Temporal, and Elasticsearch. This typically takes 3-10 minutes
-                  depending on your internet speed.
-                </p>
-              </div>
-            )}
-
-            {installError && (
-              <div className="rounded-lg bg-red-50 p-3">
-                <p className="text-sm text-red-700 font-medium mb-1">
-                  Something went wrong
-                </p>
-                <p className="text-sm text-red-600">{installError}</p>
-              </div>
-            )}
 
             <div className="flex gap-2">
               {installStatus === "pulling" && (
@@ -340,10 +328,11 @@ export function InstallPostiz() {
                 <Button
                   variant="secondary"
                   onClick={async () => {
-                    // Clean up any staged temp files, but committed files stay (allow_existing handles them)
                     await cleanStagedFiles(installPath).catch(() => {});
                     setInstallStatus("idle");
                     setInstallError(null);
+                    setInstallPhase("idle");
+                    setErrorPhase(null);
                   }}
                 >
                   Try again

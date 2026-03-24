@@ -1,6 +1,6 @@
 [package]
 name = "postiz-setup-wizard"
-version = "0.2.1"
+version = "0.3.0"
 description = "Postiz Setup Wizard"
 authors = ["you"]
 license = "MIT"
@@ -27,7 +27,7 @@ tauri-plugin-clipboard-manager = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["time"] }
 rand = "0.8"
 sysinfo = "0.32"
 reqwest = { version = "0.12", features = ["json"] }

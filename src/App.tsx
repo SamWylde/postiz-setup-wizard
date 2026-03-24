@@ -40,18 +40,7 @@ function App() {
   const currentStep = useWizardStore((s) => s.currentStep);
   const [view, setView] = useState<AppView>("loading");
   const [snapshot, setSnapshot] = useState<InstallSnapshot | null>(null);
-  const {
-    setStep,
-    setInstallPath,
-    setPort,
-    setTunnelUrl,
-    setTunnelStatus,
-    setTunnelMode,
-    setTunnelProvider,
-    setPermanentDomain,
-    setProviderStatus,
-    setTransferReviewPending,
-  } = useWizardStore();
+  const { setStep, setProviderStatus, hydrateFromResume } = useWizardStore();
 
   // Snapshot-based routing on startup
   useEffect(() => {
@@ -63,24 +52,26 @@ function App() {
         resume = await loadResumeState();
 
         if (resume) {
-          // Restore frontend state from resume
-          if (resume.install_path) setInstallPath(resume.install_path);
-          if (resume.port) setPort(resume.port);
-          if (resume.tunnel_mode) setTunnelMode(resume.tunnel_mode as "temporary" | "permanent" | "none");
-          if (resume.permanent_domain) setPermanentDomain(resume.permanent_domain);
-          if (resume.tunnel_provider) {
-            setTunnelProvider(parseTunnelProvider(resume.tunnel_provider));
-          }
-
+          // Restore frontend state from resume — silent hydration, no side effects
+          const providers: Record<string, import("./store/wizardStore").ProviderStatus> = {};
           for (const id of resume.providers_configured) {
-            setProviderStatus(id, "configured");
+            providers[id] = "configured";
           }
           for (const id of resume.providers_stale) {
-            setProviderStatus(id, "stale");
+            providers[id] = "stale";
           }
-          if (resume.transfer_review_pending) {
-            setTransferReviewPending(true);
-          }
+
+          hydrateFromResume({
+            installPath: resume.install_path || undefined,
+            port: resume.port || undefined,
+            tunnelMode: (resume.tunnel_mode as "temporary" | "permanent" | "none") || undefined,
+            permanentDomain: resume.permanent_domain || undefined,
+            tunnelProvider: resume.tunnel_provider
+              ? parseTunnelProvider(resume.tunnel_provider)
+              : undefined,
+            providers,
+            transferReviewPending: resume.transfer_review_pending || undefined,
+          });
         }
       } catch {
         // Resume state is missing or corrupt — continue with snapshot discovery
@@ -114,16 +105,17 @@ function App() {
       // If snapshot discovered an install but resume state was missing/incomplete,
       // populate the store from the snapshot so the app can route correctly
       if (!resume && snap.install_path) {
-        setInstallPath(snap.install_path);
-        setPort(snap.port);
+        hydrateFromResume({
+          installPath: snap.install_path,
+          port: snap.port,
+        });
       }
 
       // Check tunnel status (live PID check)
       try {
         const tunnel = await getTunnelStatus();
         if (tunnel.status === "running" && tunnel.url) {
-          setTunnelUrl(tunnel.url);
-          setTunnelStatus("running");
+          hydrateFromResume({ tunnelUrl: tunnel.url, tunnelStatus: "running" });
 
           // Detect tunnel URL change — mark providers stale
           if (
@@ -142,12 +134,10 @@ function App() {
             await saveResumeState().catch(() => {});
           }
         } else {
-          setTunnelUrl(null);
-          setTunnelStatus("idle");
+          hydrateFromResume({ tunnelUrl: null, tunnelStatus: "idle" });
         }
       } catch {
-        setTunnelUrl(null);
-        setTunnelStatus("idle");
+        hydrateFromResume({ tunnelUrl: null, tunnelStatus: "idle" });
       }
 
       // Route based on snapshot

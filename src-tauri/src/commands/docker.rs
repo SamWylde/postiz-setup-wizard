@@ -5,6 +5,8 @@ use tauri::{Emitter, State};
 
 use crate::state::SharedState;
 
+use super::sanitize_log_line;
+
 #[derive(Debug, Serialize, Clone)]
 pub struct ContainerInfo {
     pub name: String,
@@ -46,17 +48,15 @@ pub async fn start_stack(
 
     // Store PID for cancel support
     let pid = child.id();
-    if let Ok(mut s) = state.lock() {
-        s.docker_child_pid = Some(pid);
-    }
+    state.lock().unwrap_or_else(|e| e.into_inner()).docker_child_pid = Some(pid);
 
     // Stream stderr for progress
     if let Some(stderr) = child.stderr.take() {
         let app_clone = app.clone();
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
-            for line in reader.lines().flatten() {
-                let _ = app_clone.emit("docker-log", line);
+            for line in reader.lines().map_while(Result::ok) {
+                let _ = app_clone.emit("docker-log", sanitize_log_line(&line));
             }
         });
     }
@@ -66,17 +66,18 @@ pub async fn start_stack(
         let app_clone = app.clone();
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
-            for line in reader.lines().flatten() {
-                let _ = app_clone.emit("docker-log", line);
+            for line in reader.lines().map_while(Result::ok) {
+                let _ = app_clone.emit("docker-log", sanitize_log_line(&line));
             }
         });
     }
 
-    let status = child.wait().map_err(|e| format!("Docker pull failed: {}", e))?;
+    let status = child.wait().map_err(|e| {
+        state.lock().unwrap_or_else(|e| e.into_inner()).docker_child_pid = None;
+        format!("Docker pull failed: {}", e)
+    })?;
 
-    if let Ok(mut s) = state.lock() {
-        s.docker_child_pid = None;
-    }
+    state.lock().unwrap_or_else(|e| e.into_inner()).docker_child_pid = None;
 
     if !status.success() {
         return Err(
@@ -104,7 +105,7 @@ pub async fn start_stack(
         Ok("Stack started successfully.".to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let _ = app.emit("docker-log", format!("Start error: {}", stderr));
+        let _ = app.emit("docker-log", sanitize_log_line(&format!("Start error: {}", stderr)));
         Err(
             "Failed to start Postiz services. See Technical Details for more information."
                 .to_string(),
@@ -153,7 +154,7 @@ pub async fn get_stack_status(
             c.state == "running" && (c.health.is_empty() || c.health == "healthy")
         });
 
-    let port = state.lock().map(|s| s.port).unwrap_or(4007);
+    let port = state.lock().unwrap_or_else(|e| e.into_inner()).port;
     let postiz_responding = reqwest::Client::new()
         .get(format!("http://localhost:{}", port))
         .timeout(std::time::Duration::from_secs(5))
@@ -174,7 +175,7 @@ pub fn stop_stack_inner(path: &str) -> Result<String, String> {
     let install_path = std::path::PathBuf::from(path);
 
     let output = Command::new("docker")
-        .args(["compose", "down"])
+        .args(["compose", "--env-file", "postiz.env", "down"])
         .current_dir(&install_path)
         .output()
         .map_err(|e| format!("Failed to stop stack: {}", e))?;
@@ -225,9 +226,7 @@ pub async fn repair_stack(path: String, app: tauri::AppHandle) -> Result<String,
 #[tauri::command]
 pub fn cancel_install(state: State<SharedState>) -> Result<String, String> {
     let pid = {
-        let s = state
-            .lock()
-            .map_err(|e| format!("State lock failed: {}", e))?;
+        let s = state.lock().unwrap_or_else(|e| e.into_inner());
         s.docker_child_pid
     };
 
@@ -236,9 +235,7 @@ pub fn cancel_install(state: State<SharedState>) -> Result<String, String> {
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .output();
 
-        if let Ok(mut s) = state.lock() {
-            s.docker_child_pid = None;
-        }
+        state.lock().unwrap_or_else(|e| e.into_inner()).docker_child_pid = None;
 
         Ok("Installation cancelled.".to_string())
     } else {
@@ -272,7 +269,7 @@ pub async fn restart_and_verify(
 
     // Run docker compose down
     let output = Command::new("docker")
-        .args(["compose", "down"])
+        .args(["compose", "--env-file", "postiz.env", "down"])
         .current_dir(&install_path)
         .output()
         .map_err(|e| format!("Failed to stop stack: {}", e))?;
@@ -298,10 +295,7 @@ pub async fn restart_and_verify(
     let _ = app.emit("docker-progress", "Services started. Polling health checks...");
 
     // Get port from state
-    let port = state
-        .lock()
-        .map(|s| s.port)
-        .unwrap_or(4007);
+    let port = state.lock().unwrap_or_else(|e| e.into_inner()).port;
 
     // Poll health (up to 40 attempts, 3 seconds apart)
     let client = reqwest::Client::new();

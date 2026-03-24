@@ -60,7 +60,8 @@ pub fn run() {
                     match event.id.as_ref() {
                         "open_postiz" => {
                             let state: tauri::State<SharedState> = app.state();
-                            let url = if let Ok(s) = state.lock() {
+                            let url = {
+                                let s = state.lock().unwrap_or_else(|e| e.into_inner());
                                 s.tunnel_url.clone()
                                     .or_else(|| {
                                         if s.tunnel_mode == "permanent" {
@@ -70,8 +71,6 @@ pub fn run() {
                                         }
                                     })
                                     .or_else(|| s.local_url.clone())
-                            } else {
-                                None
                             };
                             if let Some(url) = url {
                                 let _ = open::that(url);
@@ -79,7 +78,8 @@ pub fn run() {
                         }
                         "copy_link" => {
                             let state: tauri::State<SharedState> = app.state();
-                            let url = if let Ok(s) = state.lock() {
+                            let url = {
+                                let s = state.lock().unwrap_or_else(|e| e.into_inner());
                                 s.tunnel_url.clone().or_else(|| {
                                     if s.tunnel_mode == "permanent" {
                                         s.permanent_domain.clone()
@@ -87,8 +87,6 @@ pub fn run() {
                                         None
                                     }
                                 })
-                            } else {
-                                None
                             };
                             if let Some(url) = url {
                                 let _ = app.emit("copy-to-clipboard", url.clone());
@@ -112,12 +110,11 @@ pub fn run() {
                             let app_handle = app.clone();
                             tauri::async_runtime::spawn(async move {
                                 let state: tauri::State<SharedState> = app_handle.state();
-                                let path = if let Ok(s) = state.lock() {
+                                let path = {
+                                    let s = state.lock().unwrap_or_else(|e| e.into_inner());
                                     s.install_path
                                         .as_ref()
                                         .map(|p| p.to_string_lossy().to_string())
-                                } else {
-                                    None
                                 };
                                 if let Some(path) = path {
                                     let _ = commands::docker::repair_stack_inner(
@@ -132,12 +129,11 @@ pub fn run() {
                             let app_handle = app.clone();
                             tauri::async_runtime::spawn(async move {
                                 let state: tauri::State<SharedState> = app_handle.state();
-                                let path = if let Ok(s) = state.lock() {
+                                let path = {
+                                    let s = state.lock().unwrap_or_else(|e| e.into_inner());
                                     s.install_path
                                         .as_ref()
                                         .map(|p| p.to_string_lossy().to_string())
-                                } else {
-                                    None
                                 };
                                 if let Some(path) = path {
                                     let _ = commands::docker::stop_stack_inner(&path);
@@ -155,7 +151,8 @@ pub fn run() {
                         "quit" => {
                             // Kill only our tunnel process by PID, not all cloudflared instances
                             let state: tauri::State<SharedState> = app.state();
-                            if let Ok(s) = state.lock() {
+                            {
+                                let s = state.lock().unwrap_or_else(|e| e.into_inner());
                                 if let Some(pid) = s.tunnel_pid {
                                     let _ = std::process::Command::new("taskkill")
                                         .args(["/PID", &pid.to_string(), "/T", "/F"])
@@ -192,15 +189,14 @@ pub fn run() {
                 // Show notification on first minimize
                 let app = window.app_handle();
                 let state: tauri::State<SharedState> = app.state();
-                let should_notify = if let Ok(mut s) = state.lock() {
+                let should_notify = {
+                    let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
                     if !s.has_shown_tray_notification {
                         s.has_shown_tray_notification = true;
                         true
                     } else {
                         false
                     }
-                } else {
-                    false
                 };
 
                 if should_notify {
@@ -253,7 +249,9 @@ pub fn run() {
             commands::transfer::export_clone,
             commands::transfer::validate_clone_file,
             commands::transfer::import_clone,
-            commands::transfer::clear_transfer_review,
+            commands::resume::clear_transfer_review_and_save,
+            commands::upgrade::check_postiz_update,
+            commands::upgrade::upgrade_postiz,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

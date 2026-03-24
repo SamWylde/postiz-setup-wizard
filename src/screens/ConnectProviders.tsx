@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useWizardStore } from "../store/wizardStore";
 import {
   stageProviderConfig,
   applyConfigTransaction,
+  saveResumeState,
 } from "../lib/tauri";
 import {
   providers,
@@ -16,6 +17,7 @@ import { Input } from "../components/ui/Input";
 import { CopyField } from "../components/ui/CopyField";
 import { NavigationButtons } from "../components/wizard/NavigationButtons";
 import { friendlyError } from "../lib/errors";
+import { showToast } from "../components/ui/Toast";
 import { open } from "@tauri-apps/plugin-shell";
 import {
   ExternalLink,
@@ -28,9 +30,11 @@ import {
 } from "lucide-react";
 import * as icons from "lucide-react";
 
+const iconMap: Record<string, React.ComponentType<{ className?: string }>> =
+  icons as unknown as Record<string, React.ComponentType<{ className?: string }>>;
+
 function ProviderIcon({ name }: { name: string }) {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Icon = (icons as any)[name];
+  const Icon = iconMap[name];
   if (!Icon) return <div className="h-5 w-5 bg-gray-300 rounded" />;
   return <Icon className="h-5 w-5" />;
 }
@@ -39,7 +43,7 @@ interface ProviderModalProps {
   provider: ProviderDefinition;
   baseUrl: string;
   onClose: () => void;
-  onSave: (entries: Record<string, string>) => void;
+  onSave: (entries: Record<string, string>) => Promise<void> | void;
 }
 
 function ProviderModal({
@@ -49,22 +53,65 @@ function ProviderModal({
   onSave,
 }: ProviderModalProps) {
   const [values, setValues] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
   const callbackUrl = getCallbackUrl(provider, baseUrl);
   const homepageUrl = getHomepageUrl(provider, baseUrl);
 
-  const handleSave = () => {
-    onSave(values);
-    onClose();
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !saving) {
+        onClose();
+        return;
+      }
+
+      if (e.key === "Tab" && modalRef.current) {
+        const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+          'button, input, [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            e.preventDefault();
+            last.focus();
+          }
+        } else {
+          if (document.activeElement === last) {
+            e.preventDefault();
+            first.focus();
+          }
+        }
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose, saving]);
+
+  const modalTitleId = `provider-modal-title-${provider.id}`;
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await onSave(values);
+      onClose();
+    } catch (err) {
+      showToast(friendlyError(String(err)), "error");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true">
+    <div ref={modalRef} className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" role="dialog" aria-modal="true" aria-labelledby={modalTitleId}>
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <div className="flex items-center gap-3">
             <ProviderIcon name={provider.icon} />
-            <h3 className="text-lg font-semibold text-gray-900">
+            <h3 id={modalTitleId} className="text-lg font-semibold text-gray-900">
               {provider.name} Setup
             </h3>
           </div>
@@ -150,24 +197,24 @@ function ProviderModal({
 
         {/* Footer */}
         <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50">
-          <Button variant="ghost" onClick={onClose}>
+          <Button variant="ghost" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
           {provider.envKeys.length > 0 ? (
             <Button
               onClick={handleSave}
-              disabled={provider.envKeys.some(
+              disabled={saving || provider.envKeys.some(
                 (k) => !values[k.key]?.trim(),
               )}
+              loading={saving}
             >
               Save
             </Button>
           ) : (
             <Button
-              onClick={() => {
-                onSave({});
-                onClose();
-              }}
+              onClick={handleSave}
+              loading={saving}
+              disabled={saving}
             >
               Done
             </Button>
@@ -182,6 +229,7 @@ export function ConnectProviders() {
   const {
     tunnelUrl,
     tunnelMode,
+    permanentDomain,
     installPath,
     providers: providerStatuses,
     setProviderStatus,
@@ -194,7 +242,7 @@ export function ConnectProviders() {
   // Track which providers have been staged but not yet applied
   const [stagedProviders, setStagedProviders] = useState<Set<string>>(new Set());
 
-  const baseUrl = tunnelUrl ?? "";
+  const baseUrl = tunnelUrl ?? (tunnelMode === "permanent" && permanentDomain ? permanentDomain : "");
 
   const handleSaveProvider = async (
     provider: ProviderDefinition,
@@ -218,6 +266,11 @@ export function ConnectProviders() {
       // Only mark providers as configured after successful apply
       for (const id of stagedProviders) {
         setProviderStatus(id, "configured");
+      }
+      try {
+        await saveResumeState();
+      } catch {
+        showToast("Provider config applied but failed to save resume state", "info");
       }
       setStagedProviders(new Set());
       setApplying(false);
