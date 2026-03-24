@@ -59,6 +59,7 @@ services:
 
   temporal-elasticsearch:
     container_name: temporal-elasticsearch
+    restart: always
     image: elasticsearch:7.17.27
     environment:
       - cluster.routing.allocation.disk.threshold_enabled=true
@@ -77,6 +78,7 @@ services:
 
   temporal-postgresql:
     container_name: temporal-postgresql
+    restart: always
     image: postgres:16
     environment:
       POSTGRES_PASSWORD: temporal
@@ -90,6 +92,7 @@ services:
 
   temporal:
     container_name: temporal
+    restart: always
     ports:
       - '7233:7233'
     image: temporalio/auto-setup:1.28.1
@@ -116,6 +119,7 @@ services:
 
   temporal-admin-tools:
     container_name: temporal-admin-tools
+    restart: always
     image: temporalio/admin-tools:1.28.1-tctl-1.18.4-cli-1.4.1
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
@@ -129,6 +133,7 @@ services:
 
   temporal-ui:
     container_name: temporal-ui
+    restart: always
     image: temporalio/ui:2.34.0
     environment:
       - TEMPORAL_ADDRESS=temporal:7233

@@ -182,6 +182,11 @@ export function InstallPostiz() {
       if (cancelledRef.current) return;
       setInstallPhase("health-checks");
 
+      // Core services that must be running for Postiz to function.
+      // Auxiliary services (temporal-*) are for background jobs and can
+      // recover via restart: always without blocking the install wizard.
+      const CORE_CONTAINERS = ["postiz", "postiz-postgres", "postiz-redis"];
+
       let attempts = 0;
       while (mountedRef.current && !cancelledRef.current && attempts < MAX_HEALTH_ATTEMPTS) {
         await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
@@ -191,29 +196,35 @@ export function InstallPostiz() {
 
           // Show per-container status during polling
           if (status.containers.length > 0) {
-            const healthy = status.containers.filter(
-              (c) => c.state === "running" && (c.health === "" || c.health === "healthy"),
-            ).length;
+            const running = status.containers.filter((c) => c.state === "running").length;
             const total = status.containers.length;
-            const crashed = status.containers.filter(
-              (c) => c.state === "exited" || c.state === "dead",
+            const deadCore = status.containers.filter(
+              (c) =>
+                CORE_CONTAINERS.includes(c.name) &&
+                (c.state === "exited" || c.state === "dead"),
             );
-            if (crashed.length > 0) {
-              setProgressDetail(
-                `${crashed.map((c) => c.name).join(", ")} stopped — check Docker Desktop`,
+
+            if (deadCore.length > 0) {
+              // Core service crashed — fail immediately, no point waiting
+              setInstallStatus("error");
+              setInstallError(
+                `${deadCore.map((c) => c.name).join(", ")} crashed. Open Docker Desktop to check logs, then try again.`,
               );
-            } else {
-              setProgressDetail(`${healthy}/${total} services healthy`);
+              setErrorPhase("health-checks");
+              return;
             }
+
+            setProgressDetail(
+              status.postiz_responding
+                ? "Postiz is responding — finalizing..."
+                : `${running}/${total} containers running`,
+            );
           }
 
-          // Success: Postiz responds HTTP and no containers have crashed.
-          // We don't require Docker's own health checks to pass yet —
-          // start_period can be long on first install.
-          const noContainersCrashed = status.containers.every(
-            (c) => c.state !== "exited" && c.state !== "dead",
-          );
-          if (status.postiz_responding && noContainersCrashed) {
+          // Primary gate: Postiz responds to HTTP.
+          // Auxiliary containers (temporal-*) may still be starting via
+          // restart: always — they don't block the wizard.
+          if (status.postiz_responding) {
             setInstallStatus("running");
             setPostizReady(true);
             setInstallPhase("ready");
@@ -229,7 +240,7 @@ export function InstallPostiz() {
       if (cancelledRef.current) return;
       setInstallStatus("error");
       setInstallError(
-        "Services started but Postiz didn't become healthy within 4 minutes. Check Docker Desktop for container issues, then try again.",
+        "Postiz didn't respond within 4 minutes. Check Docker Desktop for container issues, then try again.",
       );
       setErrorPhase("health-checks");
     } catch (err) {
