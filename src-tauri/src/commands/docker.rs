@@ -276,7 +276,48 @@ pub async fn start_stack(
         Ok("Stack started successfully.".to_string())
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let _ = app.emit("docker-log", sanitize_log_line(&format!("Start error: {}", stderr)));
+
+        // Detect "container name already in use" conflicts from a previous install
+        // and force-remove the stale containers, then retry once.
+        let conflict_re = Regex::new(r#"The container name "(/[^"]+)" is already in use by container "([0-9a-f]+)""#).unwrap();
+        let conflicts: Vec<String> = conflict_re
+            .captures_iter(&stderr)
+            .map(|c| c[2].to_string())
+            .collect();
+
+        if !conflicts.is_empty() {
+            let _ = app.emit("docker-progress", "Removing conflicting containers from a previous install...");
+            for container_id in &conflicts {
+                let _ = silent_cmd("docker")
+                    .args(["rm", "-f", container_id])
+                    .output();
+            }
+
+            // Retry once after cleanup
+            let _ = app.emit("docker-progress", "Retrying service startup...");
+            let retry_output = run_docker_compose(
+                &["compose", "--env-file", "postiz.env", "up", "-d"],
+                &install_path,
+                &state,
+            )
+            .map_err(|_| {
+                "Could not start Docker services. Make sure Docker Desktop is running.".to_string()
+            })?;
+
+            if retry_output.status.success() {
+                let _ = app.emit(
+                    "docker-progress",
+                    "Services started. Waiting for health checks...",
+                );
+                return Ok("Stack started successfully.".to_string());
+            }
+
+            let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
+            let _ = app.emit("docker-log", sanitize_log_line(&format!("Start error (retry): {}", retry_stderr)));
+        } else {
+            let _ = app.emit("docker-log", sanitize_log_line(&format!("Start error: {}", stderr)));
+        }
+
         Err(
             "Failed to start Postiz services. See Technical Details for more information."
                 .to_string(),
