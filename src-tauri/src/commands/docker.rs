@@ -258,71 +258,57 @@ pub async fn start_stack(
 
     let _ = app.emit("docker-progress", "Starting Postiz services...");
 
-    // Start the stack (cancellable via cancel_docker_operation)
-    let output = run_docker_compose(
-        &["compose", "--env-file", "postiz.env", "up", "-d"],
-        &install_path,
-        &state,
-    )
-    .map_err(|_| {
-        "Could not start Docker services. Make sure Docker Desktop is running.".to_string()
-    })?;
+    // Start the stack with automatic conflict resolution.
+    // Docker Compose reports only the first conflicting container per attempt,
+    // so we loop to clear them all (from previous installs at different paths).
+    let conflict_re = Regex::new(r#"already in use by container "([0-9a-f]+)""#).unwrap();
+    let max_attempts = 10;
 
-    if output.status.success() {
-        let _ = app.emit(
-            "docker-progress",
-            "Services started. Waiting for health checks...",
-        );
-        Ok("Stack started successfully.".to_string())
-    } else {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    for attempt in 0..max_attempts {
+        let output = run_docker_compose(
+            &["compose", "--env-file", "postiz.env", "up", "-d"],
+            &install_path,
+            &state,
+        )
+        .map_err(|_| {
+            "Could not start Docker services. Make sure Docker Desktop is running.".to_string()
+        })?;
 
-        // Detect "container name already in use" conflicts from a previous install
-        // and force-remove the stale containers, then retry once.
-        let conflict_re = Regex::new(r#"The container name "(/[^"]+)" is already in use by container "([0-9a-f]+)""#).unwrap();
-        let conflicts: Vec<String> = conflict_re
-            .captures_iter(&stderr)
-            .map(|c| c[2].to_string())
-            .collect();
-
-        if !conflicts.is_empty() {
-            let _ = app.emit("docker-progress", "Removing conflicting containers from a previous install...");
-            for container_id in &conflicts {
-                let _ = silent_cmd("docker")
-                    .args(["rm", "-f", container_id])
-                    .output();
-            }
-
-            // Retry once after cleanup
-            let _ = app.emit("docker-progress", "Retrying service startup...");
-            let retry_output = run_docker_compose(
-                &["compose", "--env-file", "postiz.env", "up", "-d"],
-                &install_path,
-                &state,
-            )
-            .map_err(|_| {
-                "Could not start Docker services. Make sure Docker Desktop is running.".to_string()
-            })?;
-
-            if retry_output.status.success() {
-                let _ = app.emit(
-                    "docker-progress",
-                    "Services started. Waiting for health checks...",
-                );
-                return Ok("Stack started successfully.".to_string());
-            }
-
-            let retry_stderr = String::from_utf8_lossy(&retry_output.stderr);
-            let _ = app.emit("docker-log", sanitize_log_line(&format!("Start error (retry): {}", retry_stderr)));
-        } else {
-            let _ = app.emit("docker-log", sanitize_log_line(&format!("Start error: {}", stderr)));
+        if output.status.success() {
+            let _ = app.emit(
+                "docker-progress",
+                "Services started. Waiting for health checks...",
+            );
+            return Ok("Stack started successfully.".to_string());
         }
 
-        Err(
-            "Failed to start Postiz services. See Technical Details for more information."
-                .to_string(),
-        )
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let conflicts: Vec<String> = conflict_re
+            .captures_iter(&stderr)
+            .map(|c| c[1].to_string())
+            .collect();
+
+        if conflicts.is_empty() || attempt == max_attempts - 1 {
+            // Not a container conflict or out of retries — report the real error
+            let _ = app.emit("docker-log", sanitize_log_line(&format!("Start error: {}", stderr)));
+            return Err(
+                "Failed to start Postiz services. See Technical Details for more information."
+                    .to_string(),
+            );
+        }
+
+        let _ = app.emit(
+            "docker-progress",
+            &format!("Removing {} conflicting container(s) from a previous install...", conflicts.len()),
+        );
+        for container_id in &conflicts {
+            let _ = silent_cmd("docker")
+                .args(["rm", "-f", container_id])
+                .output();
+        }
     }
+
+    Err("Failed to start Postiz services after removing conflicting containers.".to_string())
 }
 
 #[tauri::command]
