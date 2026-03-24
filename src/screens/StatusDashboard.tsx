@@ -733,6 +733,12 @@ export function StatusDashboard() {
           </h4>
           <p className="text-xs text-gray-500 mb-3">
             Provide your {tunnelProvider === "ngrok" ? "ngrok authtoken" : "Pinggy token"} to reconnect, or leave blank to attempt without it.
+            {" "}
+            {tunnelProvider === "ngrok" ? (
+              <button onClick={() => open("https://ngrok.com/signup")} className="text-blue-600 hover:text-blue-700 underline">Get one at ngrok.com</button>
+            ) : (
+              <button onClick={() => open("https://pinggy.io")} className="text-blue-600 hover:text-blue-700 underline">Get one at pinggy.io</button>
+            )}
           </p>
           <input
             type="password"

@@ -333,7 +333,12 @@ export function RecoveryCenter({
             {showReconnectInput && (
               <div>
                 <p className="text-xs text-gray-500 mb-2">
-                  {tunnelProvider === "ngrok" ? "ngrok authtoken" : "Pinggy token"} (optional)
+                  {tunnelProvider === "ngrok" ? "ngrok authtoken" : "Pinggy token"} (optional).{" "}
+                  {tunnelProvider === "ngrok" ? (
+                    <button onClick={() => open("https://ngrok.com/signup")} className="text-blue-600 hover:text-blue-700 underline">Get one at ngrok.com</button>
+                  ) : (
+                    <button onClick={() => open("https://pinggy.io")} className="text-blue-600 hover:text-blue-700 underline">Get one at pinggy.io</button>
+                  )}
                 </p>
                 <input
                   type="password"

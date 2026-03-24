@@ -484,7 +484,7 @@ export function CreateWebLink() {
               />
               <p className="text-xs text-gray-500 mt-1">
                 Get a free authtoken at{" "}
-                <button onClick={() => open("https://dashboard.ngrok.com/signup")} className="text-blue-600 hover:text-blue-700 underline">
+                <button onClick={() => open("https://ngrok.com/signup")} className="text-blue-600 hover:text-blue-700 underline">
                   ngrok.com/signup
                 </button>
               </p>
@@ -627,9 +627,9 @@ export function CreateWebLink() {
             </div>
             <p className="text-sm text-gray-600">
               Postiz will be available at{" "}
-              <span className="font-mono text-blue-600">
+              <button onClick={() => open(`http://localhost:${port}`)} className="font-mono text-blue-600 hover:text-blue-700 underline">
                 http://localhost:{port}
-              </span>{" "}
+              </button>{" "}
               on this computer only. You can still use Postiz to draft and
               organize content, but connecting social media accounts requires a
               public URL.
@@ -670,9 +670,9 @@ export function CreateWebLink() {
               <p className="text-sm text-gray-700 mb-2">
                 <strong>Don't need social media integrations?</strong> You can
                 skip this step and use Postiz locally at{" "}
-                <span className="font-mono text-blue-600">
+                <button onClick={() => open(`http://localhost:${port}`)} className="font-mono text-blue-600 hover:text-blue-700 underline">
                   http://localhost:{port}
-                </span>
+                </button>
                 .
               </p>
               <Button variant="ghost" onClick={handleChooseLocalOnly} disabled={switchingLocal} loading={switchingLocal}>

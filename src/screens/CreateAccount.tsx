@@ -70,8 +70,12 @@ export function CreateAccount() {
     };
   }, [retryCount]);
 
-  const handleOpenPostiz = () => {
-    open(localUrl);
+  const handleOpenPostiz = async () => {
+    try {
+      await open(localUrl);
+    } catch (err) {
+      showToast(`Could not open URL: ${String(err)}`, "error");
+    }
   };
 
   const handleAccountCreated = async () => {
@@ -133,6 +137,12 @@ export function CreateAccount() {
 
           {postizReady && (
             <>
+              <p className="text-sm text-gray-600">
+                Postiz is available at{" "}
+                <button onClick={handleOpenPostiz} className="text-blue-600 hover:text-blue-700 underline font-mono">
+                  {localUrl}
+                </button>
+              </p>
               <Button onClick={handleOpenPostiz}>Open Postiz</Button>
 
               <div className="bg-blue-50 rounded-lg p-4">

@@ -456,7 +456,10 @@ export function ConnectProviders() {
           <p className="text-sm text-red-700 font-medium mb-1">
             Failed to apply provider changes
           </p>
-          <p className="text-sm text-red-600">{applyError}</p>
+          <p className="text-sm text-red-600 mb-3">{applyError}</p>
+          <Button variant="secondary" onClick={handleNext}>
+            Retry
+          </Button>
         </div>
       )}
 

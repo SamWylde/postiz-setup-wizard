@@ -1,6 +1,6 @@
 [package]
 name = "postiz-setup-wizard"
-version = "0.4.2"
+version = "0.4.3"
 description = "Postiz Setup Wizard"
 authors = ["you"]
 license = "MIT"
