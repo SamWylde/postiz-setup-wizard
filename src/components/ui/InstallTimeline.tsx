@@ -49,8 +49,8 @@ const PHASES: PhaseDefinition[] = [
     id: "health-checks",
     label: "Running health checks",
     guidance:
-      "Waiting for every service to report healthy and for Postiz to respond. This is normal — databases and search engines can take a minute to initialize.",
-    timing: "1–3 minutes",
+      "Waiting for all services to start and for Postiz to respond. This is normal — databases and search engines can take a few minutes to initialize on first install.",
+    timing: "1–4 minutes",
   },
   {
     id: "ready",

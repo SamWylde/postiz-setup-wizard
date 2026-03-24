@@ -32,7 +32,7 @@ import { showToast } from "../components/ui/Toast";
 
 const PRE_HEALTH_WAIT_MS = 5_000;
 const HEALTH_POLL_INTERVAL_MS = 3_000;
-const MAX_HEALTH_ATTEMPTS = 60;
+const MAX_HEALTH_ATTEMPTS = 80;
 const ELAPSED_TICK_MS = 1_000;
 
 export function InstallPostiz() {
@@ -188,7 +188,32 @@ export function InstallPostiz() {
         if (cancelledRef.current) return;
         try {
           const status = await getStackStatus(installPath);
-          if (status.all_healthy && status.postiz_responding) {
+
+          // Show per-container status during polling
+          if (status.containers.length > 0) {
+            const healthy = status.containers.filter(
+              (c) => c.state === "running" && (c.health === "" || c.health === "healthy"),
+            ).length;
+            const total = status.containers.length;
+            const crashed = status.containers.filter(
+              (c) => c.state === "exited" || c.state === "dead",
+            );
+            if (crashed.length > 0) {
+              setProgressDetail(
+                `${crashed.map((c) => c.name).join(", ")} stopped — check Docker Desktop`,
+              );
+            } else {
+              setProgressDetail(`${healthy}/${total} services healthy`);
+            }
+          }
+
+          // Success: Postiz responds HTTP and no containers have crashed.
+          // We don't require Docker's own health checks to pass yet —
+          // start_period can be long on first install.
+          const noContainersCrashed = status.containers.every(
+            (c) => c.state !== "exited" && c.state !== "dead",
+          );
+          if (status.postiz_responding && noContainersCrashed) {
             setInstallStatus("running");
             setPostizReady(true);
             setInstallPhase("ready");
@@ -204,7 +229,7 @@ export function InstallPostiz() {
       if (cancelledRef.current) return;
       setInstallStatus("error");
       setInstallError(
-        "Services started but Postiz didn't become healthy within 3 minutes. Check Docker Desktop for container issues, then try again.",
+        "Services started but Postiz didn't become healthy within 4 minutes. Check Docker Desktop for container issues, then try again.",
       );
       setErrorPhase("health-checks");
     } catch (err) {
