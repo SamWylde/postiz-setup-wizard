@@ -19,6 +19,13 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Another instance was launched — focus the existing window
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .setup(|app| {
             // Build tray menu
             let open_postiz =
@@ -52,7 +59,7 @@ pub fn run() {
                 .default_window_icon()
                 .cloned()
                 .ok_or("No default window icon found — check tauri.conf.json bundle.icon")?;
-            let _tray = TrayIconBuilder::new()
+            let _tray = TrayIconBuilder::with_id("postiz-tray")
                 .icon(tray_icon)
                 .menu(&menu)
                 .tooltip("Postiz Setup Wizard")

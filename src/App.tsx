@@ -170,9 +170,18 @@ function App() {
         // Docker is running and containers exist but are unhealthy — recovery
         if (resume) setStep(resume.current_step);
         setView("recovery");
+      } else if (!snap.docker_running) {
+        // Docker isn't running — send to PrepareComputer (step 0) which
+        // handles Docker prerequisites. Later wizard steps can't start Docker.
+        setStep(0);
+        setView("wizard");
+      } else if (!snap.postiz_responding && snap.install_exists) {
+        // Docker is running but Postiz isn't responding (hung container,
+        // containers stopped, etc.) — recovery has the restart button.
+        if (resume) setStep(resume.current_step);
+        setView("recovery");
       } else {
-        // Install exists but services not running (Docker stopped, containers
-        // removed, etc.) — resume the wizard which handles Docker prerequisites.
+        // Install exists, Docker running, no containers — resume wizard.
         if (resume && resume.current_step > 0) {
           setStep(resume.current_step);
         }

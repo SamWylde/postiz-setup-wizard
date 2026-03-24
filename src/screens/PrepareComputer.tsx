@@ -13,6 +13,7 @@ export function PrepareComputer() {
   const [actionLog, setActionLog] = useState<string[]>([]);
   const [currentAction, setCurrentAction] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [wslNeedsRestart, setWslNeedsRestart] = useState(false);
 
   const checkMachine = async () => {
     setBootstrapStatus("checking");
@@ -66,6 +67,15 @@ export function PrepareComputer() {
       if (ok) {
         // WSL2 install succeeded — rescan to verify
         await checkMachine();
+        // If still not detected after rescan, a restart is likely needed
+        const updated = useWizardStore.getState().machineState;
+        if (updated && !updated.wsl2_installed) {
+          setWslNeedsRestart(true);
+          setActionLog((prev) => [
+            ...prev,
+            "WSL2 was installed but isn't active yet. A system restart may be required.",
+          ]);
+        }
       }
       return;
     }
@@ -126,9 +136,21 @@ export function PrepareComputer() {
           {machineState ? (
             <>
               <StatusIndicator
-                status={getStatus(machineState.wsl2_installed)}
+                status={
+                  machineState.wsl2_installed
+                    ? "success"
+                    : wslNeedsRestart
+                      ? "warning"
+                      : getStatus(false)
+                }
                 label="Linux compatibility layer"
-                detail={machineState.wsl2_installed ? "Ready" : "Needs install (WSL2)"}
+                detail={
+                  machineState.wsl2_installed
+                    ? "Ready"
+                    : wslNeedsRestart
+                      ? "Installed — restart your computer to activate WSL2"
+                      : "Needs install (WSL2)"
+                }
               />
               <StatusIndicator
                 status={getStatus(machineState.docker_installed)}
@@ -200,13 +222,18 @@ export function PrepareComputer() {
         </div>
 
         {bootstrapStatus === "action-needed" && machineState && (
-          <div className="mt-4 pt-4 border-t border-gray-200">
+          <div className="mt-4 pt-4 border-t border-gray-200 space-y-3">
             <Button
               onClick={handleBootstrap}
               loading={currentAction !== null}
             >
               {currentAction ?? "Set up this computer"}
             </Button>
+            {wslNeedsRestart && (
+              <Button variant="secondary" onClick={() => { setWslNeedsRestart(false); checkMachine(); }}>
+                I've restarted — re-check now
+              </Button>
+            )}
           </div>
         )}
 
