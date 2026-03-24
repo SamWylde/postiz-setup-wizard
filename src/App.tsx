@@ -162,12 +162,17 @@ function App() {
           setStep(6);
           setView("dashboard");
         }
-      } else if (snap.recovery_available) {
-        // Install exists but issues detected — show recovery
+      } else if (snap.has_staged_temp) {
+        // Interrupted install — recovery needed to clean up
+        if (resume) setStep(resume.current_step);
+        setView("recovery");
+      } else if (snap.docker_running && snap.containers.length > 0 && !snap.all_healthy) {
+        // Docker is running and containers exist but are unhealthy — recovery
         if (resume) setStep(resume.current_step);
         setView("recovery");
       } else {
-        // Install exists, nothing running, resume wizard
+        // Install exists but services not running (Docker stopped, containers
+        // removed, etc.) — resume the wizard which handles Docker prerequisites.
         if (resume && resume.current_step > 0) {
           setStep(resume.current_step);
         }

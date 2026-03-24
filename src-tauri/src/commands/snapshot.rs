@@ -209,9 +209,11 @@ pub async fn get_install_snapshot(
         None
     };
 
-    // 10. Determine recovery_available
-    let recovery_available =
-        install_exists && (!all_healthy || !postiz_responding || has_staged_temp);
+    // 10. Determine recovery_available — only for genuine problems, not just
+    //     "Docker isn't running".  The wizard's PrepareComputer step handles
+    //     Docker prerequisites, so we don't need recovery for that.
+    let has_unhealthy_containers = !containers.is_empty() && !all_healthy;
+    let recovery_available = install_exists && (has_staged_temp || has_unhealthy_containers);
 
     Ok(InstallSnapshot {
         install_path: install_path_str,
