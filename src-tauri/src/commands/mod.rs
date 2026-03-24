@@ -12,6 +12,17 @@ pub mod tunnel;
 pub mod updater;
 pub mod upgrade;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+/// Create a `Command` that won't spawn a visible console window on Windows.
+pub fn silent_cmd(program: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    cmd
+}
+
 /// Shared mapping of env-file keys to provider IDs.
 /// Used by import, snapshot, and transfer to detect configured providers.
 /// Note: Instagram uses the same Facebook App keys (FACEBOOK_APP_ID/SECRET),

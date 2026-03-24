@@ -1,13 +1,12 @@
 use regex::Regex;
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 use tauri::{Emitter, State};
 
+use super::{sanitize_log_line, silent_cmd};
 use crate::commands::bootstrap::resolve_binary;
 use crate::state::{SharedState, TunnelProvider};
-
-use super::sanitize_log_line;
 
 /// How long to wait before first URL poll (seconds).
 const URL_INITIAL_WAIT_SECS: u64 = 10;
@@ -43,7 +42,7 @@ enum UrlSource {
 /// Uses tasklist with PID filter in CSV format for reliable parsing.
 /// When no process matches, tasklist outputs an "INFO:" line.
 fn is_pid_alive(pid: u32) -> bool {
-    Command::new("tasklist")
+    silent_cmd("tasklist")
         .args(["/FI", &format!("PID eq {}", pid), "/NH", "/FO", "CSV"])
         .output()
         .map(|o| {
@@ -58,7 +57,7 @@ fn kill_existing_tunnel(state: &SharedState) {
     let existing_pid = state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid;
     if let Some(pid) = existing_pid {
         if is_pid_alive(pid) {
-            let _ = Command::new("taskkill")
+            let _ = silent_cmd("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                 .output();
         }
@@ -77,7 +76,7 @@ fn spawn_tunnel_process(
     url_source: UrlSource,
     app: &tauri::AppHandle,
 ) -> Result<(u32, SharedUrl), String> {
-    let mut command = Command::new(cmd);
+    let mut command = silent_cmd(cmd);
     command
         .args(args)
         .stdout(Stdio::piped())
@@ -242,7 +241,7 @@ async fn start_cloudflared(
         }
         None => {
             // Kill orphaned process
-            let _ = Command::new("taskkill")
+            let _ = silent_cmd("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                 .output();
             state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = None;
@@ -262,7 +261,7 @@ async fn start_ngrok(
     // If authtoken provided, configure it first
     if let Some(ref token) = config {
         if !token.trim().is_empty() {
-            let output = Command::new(&ngrok_bin)
+            let output = silent_cmd(&ngrok_bin)
                 .args(["config", "add-authtoken", token.trim()])
                 .output()
                 .map_err(|e| format!("Failed to configure ngrok authtoken: {}", e))?;
@@ -293,7 +292,7 @@ async fn start_ngrok(
             Ok(url)
         }
         None => {
-            let _ = Command::new("taskkill")
+            let _ = silent_cmd("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                 .output();
             state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = None;
@@ -327,7 +326,7 @@ async fn start_zrok(
             Ok(url)
         }
         None => {
-            let _ = Command::new("taskkill")
+            let _ = silent_cmd("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                 .output();
             state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = None;
@@ -379,7 +378,7 @@ async fn start_pinggy(
             Ok(url)
         }
         None => {
-            let _ = Command::new("taskkill")
+            let _ = silent_cmd("taskkill")
                 .args(["/PID", &pid.to_string(), "/T", "/F"])
                 .output();
             state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = None;
@@ -424,7 +423,7 @@ pub async fn stop_tunnel(state: State<'_, SharedState>) -> Result<String, String
     };
 
     if let Some(pid) = pid {
-        let _ = Command::new("taskkill")
+        let _ = silent_cmd("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .output();
     }
@@ -529,12 +528,12 @@ pub async fn reconnect_tunnel(
 
     // Restart Postiz
     let path = std::path::PathBuf::from(&install_path);
-    let _ = Command::new("docker")
+    let _ = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "down"])
         .current_dir(&path)
         .output();
 
-    let _ = Command::new("docker")
+    let _ = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "up", "-d"])
         .current_dir(&path)
         .output();

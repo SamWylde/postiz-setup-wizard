@@ -1,11 +1,10 @@
 use serde::Serialize;
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use tauri::{Emitter, State};
 
+use super::{sanitize_log_line, silent_cmd};
 use crate::state::SharedState;
-
-use super::sanitize_log_line;
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ContainerInfo {
@@ -36,7 +35,7 @@ pub async fn start_stack(
     );
 
     // Pull images with streaming progress
-    let mut child = Command::new("docker")
+    let mut child = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "pull"])
         .current_dir(&install_path)
         .stdout(Stdio::piped())
@@ -89,7 +88,7 @@ pub async fn start_stack(
     let _ = app.emit("docker-progress", "Starting Postiz services...");
 
     // Start the stack
-    let output = Command::new("docker")
+    let output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "up", "-d"])
         .current_dir(&install_path)
         .output()
@@ -120,7 +119,7 @@ pub async fn get_stack_status(
 ) -> Result<StackStatus, String> {
     let install_path = std::path::PathBuf::from(&path);
 
-    let output = Command::new("docker")
+    let output = silent_cmd("docker")
         .args(["compose", "ps", "--format", "json"])
         .current_dir(&install_path)
         .output()
@@ -174,7 +173,7 @@ pub async fn get_stack_status(
 pub fn stop_stack_inner(path: &str) -> Result<String, String> {
     let install_path = std::path::PathBuf::from(path);
 
-    let output = Command::new("docker")
+    let output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "down"])
         .current_dir(&install_path)
         .output()
@@ -203,7 +202,7 @@ pub async fn repair_stack_inner(path: &str, app: &tauri::AppHandle) -> Result<St
     let install_path = std::path::PathBuf::from(path);
     let _ = app.emit("docker-progress", "Starting Postiz services...");
 
-    let output = Command::new("docker")
+    let output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "up", "-d"])
         .current_dir(&install_path)
         .output()
@@ -231,7 +230,7 @@ pub fn cancel_install(state: State<SharedState>) -> Result<String, String> {
     };
 
     if let Some(pid) = pid {
-        let _ = Command::new("taskkill")
+        let _ = silent_cmd("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .output();
 
@@ -247,7 +246,7 @@ pub fn cancel_install(state: State<SharedState>) -> Result<String, String> {
 pub async fn get_docker_logs(path: String) -> Result<Vec<String>, String> {
     let install_path = std::path::PathBuf::from(&path);
 
-    let output = Command::new("docker")
+    let output = silent_cmd("docker")
         .args(["compose", "logs", "--tail", "100"])
         .current_dir(&install_path)
         .output()
@@ -268,7 +267,7 @@ pub async fn restart_and_verify(
     let _ = app.emit("docker-progress", "Restarting Postiz...");
 
     // Run docker compose down
-    let output = Command::new("docker")
+    let output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "down"])
         .current_dir(&install_path)
         .output()
@@ -281,7 +280,7 @@ pub async fn restart_and_verify(
 
     // Run docker compose up
     let _ = app.emit("docker-progress", "Starting Postiz services...");
-    let output = Command::new("docker")
+    let output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "up", "-d"])
         .current_dir(&install_path)
         .output()
@@ -308,7 +307,7 @@ pub async fn restart_and_verify(
         );
 
         // Check container status
-        let ps_output = Command::new("docker")
+        let ps_output = silent_cmd("docker")
             .args(["compose", "ps", "--format", "json"])
             .current_dir(&install_path)
             .output();

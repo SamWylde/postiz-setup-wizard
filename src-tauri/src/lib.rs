@@ -154,7 +154,7 @@ pub fn run() {
                             {
                                 let s = state.lock().unwrap_or_else(|e| e.into_inner());
                                 if let Some(pid) = s.tunnel_pid {
-                                    let _ = std::process::Command::new("taskkill")
+                                    let _ = crate::commands::silent_cmd("taskkill")
                                         .args(["/PID", &pid.to_string(), "/T", "/F"])
                                         .output();
                                 }

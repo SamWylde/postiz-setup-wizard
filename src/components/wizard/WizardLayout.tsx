@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useWizardStore } from "../../store/wizardStore";
-import { getCurrentAppVersion } from "../../lib/tauri";
+import { getCurrentAppVersion, installUpdate } from "../../lib/tauri";
+import { listen } from "@tauri-apps/api/event";
 import { StepIndicator } from "./StepIndicator";
 import { Activity, Wrench } from "lucide-react";
 
@@ -22,12 +23,56 @@ export function WizardLayout({ children, view = "wizard" }: WizardLayoutProps) {
   const currentStep = useWizardStore((s) => s.currentStep);
   const setStep = useWizardStore((s) => s.setStep);
   const [appVersion, setAppVersion] = useState("v0.1.0");
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [latestVersion, setLatestVersion] = useState("");
+  const [installing, setInstalling] = useState(false);
+  const [installStatus, setInstallStatus] = useState("");
 
   useEffect(() => {
     getCurrentAppVersion()
       .then((v) => setAppVersion(`v${v}`))
       .catch(() => {});
   }, []);
+
+  // Listen for update discovery
+  useEffect(() => {
+    const unlisten = listen<{ available: boolean; latest_version: string }>("update-info-discovered", (event) => {
+      if (event.payload.available) {
+        setUpdateAvailable(true);
+        setLatestVersion(event.payload.latest_version);
+      }
+    });
+    return () => { unlisten.then((f) => f()).catch(() => {}); };
+  }, []);
+
+  // Listen for update status and progress
+  useEffect(() => {
+    const unlistenStatus = listen<string>("update-status", (event) => {
+      const status = event.payload;
+      if (status === "downloading") setInstallStatus("Downloading...");
+      else if (status === "installing") setInstallStatus("Installing — app will restart...");
+      else if (status === "error") { setInstallStatus(""); setInstalling(false); }
+    });
+    const unlistenProgress = listen<{ percent: number; downloaded: number; total: number }>("update-progress", (event) => {
+      if (event.payload.percent > 0) {
+        setInstallStatus(`Downloading... ${event.payload.percent}%`);
+      }
+    });
+    return () => {
+      unlistenStatus.then((f) => f()).catch(() => {});
+      unlistenProgress.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
+  const handleInstall = async () => {
+    setInstalling(true);
+    try {
+      await installUpdate();
+    } catch {
+      setInstalling(false);
+      setInstallStatus("");
+    }
+  };
 
   return (
     <div className="flex h-screen">
@@ -98,7 +143,17 @@ export function WizardLayout({ children, view = "wizard" }: WizardLayoutProps) {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 overflow-y-auto bg-gray-50 p-8">{children}</div>
+      <div className="flex-1 overflow-y-auto bg-gray-50">
+        {updateAvailable && (
+          <div className="bg-blue-600 px-4 py-2 flex items-center justify-between text-white text-sm">
+            <span>Update available: v{latestVersion}</span>
+            <button onClick={handleInstall} disabled={installing}>
+              {installStatus || "Install & Restart"}
+            </button>
+          </div>
+        )}
+        <div className="p-8">{children}</div>
+      </div>
     </div>
   );
 }

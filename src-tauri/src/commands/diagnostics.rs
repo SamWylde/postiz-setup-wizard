@@ -1,6 +1,6 @@
-use std::process::Command;
 use tauri::State;
 
+use super::silent_cmd;
 use crate::state::SharedState;
 
 #[tauri::command]
@@ -48,7 +48,7 @@ pub async fn export_diagnostics(
 
     // Docker version
     report.push_str("--- Docker Version ---\n");
-    match Command::new("docker").arg("--version").output() {
+    match silent_cmd("docker").arg("--version").output() {
         Ok(o) => report.push_str(&String::from_utf8_lossy(&o.stdout)),
         Err(e) => report.push_str(&format!("Error: {}\n", e)),
     }
@@ -56,7 +56,7 @@ pub async fn export_diagnostics(
 
     // Docker info
     report.push_str("--- Docker Info ---\n");
-    match Command::new("docker").arg("info").output() {
+    match silent_cmd("docker").arg("info").output() {
         Ok(o) => {
             report.push_str(&String::from_utf8_lossy(&o.stdout));
             let stderr = String::from_utf8_lossy(&o.stderr);
@@ -71,7 +71,7 @@ pub async fn export_diagnostics(
     // Docker compose ps & logs (only if install path is set)
     if let Some(ref path) = install_path {
         report.push_str("--- Docker Compose PS ---\n");
-        match Command::new("docker")
+        match silent_cmd("docker")
             .args(["compose", "ps"])
             .current_dir(path)
             .output()
@@ -88,7 +88,7 @@ pub async fn export_diagnostics(
         report.push('\n');
 
         report.push_str("--- Docker Compose Logs (last 200 lines) ---\n");
-        match Command::new("docker")
+        match silent_cmd("docker")
             .args(["compose", "logs", "--tail", "200"])
             .current_dir(path)
             .output()

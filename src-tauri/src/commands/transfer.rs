@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io::{Read as IoRead, Write as IoWrite};
 use std::path::PathBuf;
-use std::process::Command;
 use tauri::{Emitter, State};
 
+use super::silent_cmd;
 use crate::commands::env_file::parse_env_file;
 use crate::state::SharedState;
 
@@ -73,7 +73,7 @@ fn emit_progress(app: &tauri::AppHandle, phase: &str, message: &str, current: Op
 
 /// Inspect a container to find the actual Docker volume name for a given mount path.
 fn discover_volume_name(container_name: &str, mount_path: &str) -> Result<String, String> {
-    let output = Command::new("docker")
+    let output = silent_cmd("docker")
         .args(["inspect", container_name, "--format", "json"])
         .output()
         .map_err(|e| format!("Failed to inspect container {}: {}", container_name, e))?;
@@ -214,7 +214,7 @@ pub async fn export_clone(
     // Step 2: Stop stack for consistent backup
     emit_progress(&app, "stopping", "Stopping services for consistent backup...", None, None);
 
-    let stop_result = Command::new("docker")
+    let stop_result = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "down"])
         .current_dir(&install_path)
         .output();
@@ -222,7 +222,7 @@ pub async fn export_clone(
     // Always restart on exit, even if export fails
     let install_path_for_restart = install_path.clone();
     let restart_on_exit = scopeguard::guard((), |_| {
-        let _ = Command::new("docker")
+        let _ = silent_cmd("docker")
             .args(["compose", "--env-file", "postiz.env", "up", "-d"])
             .current_dir(&install_path_for_restart)
             .output();
@@ -314,7 +314,7 @@ pub async fn export_clone(
             let tar_path = temp_dir.join(tar_name);
 
             // Use docker run to tar the volume contents to a temp file on disk
-            let output = Command::new("docker")
+            let output = silent_cmd("docker")
                 .args([
                     "run", "--rm",
                     "-v", &format!("{}:/source:ro", actual_name),
@@ -553,7 +553,7 @@ pub async fn import_clone(
     let should_cleanup_clone = should_cleanup.clone();
     let _cleanup = scopeguard::guard((), |_| {
         if should_cleanup_clone.load(std::sync::atomic::Ordering::Relaxed) {
-            let _ = Command::new("docker")
+            let _ = silent_cmd("docker")
                 .args(["compose", "down", "--volumes"])
                 .current_dir(&cleanup_dir)
                 .output();
@@ -583,7 +583,7 @@ pub async fn import_clone(
     // Step 5: Pull images
     emit_progress(&app, "pulling", "Pulling Docker images (this may take several minutes)...", None, None);
 
-    let pull_output = Command::new("docker")
+    let pull_output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "pull"])
         .current_dir(&install_dir)
         .output()
@@ -597,7 +597,7 @@ pub async fn import_clone(
     // Step 6: Create containers (without starting) to establish volumes
     emit_progress(&app, "restoring", "Creating containers...", None, None);
 
-    let create_output = Command::new("docker")
+    let create_output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "create"])
         .current_dir(&install_dir)
         .output()
@@ -646,7 +646,7 @@ pub async fn import_clone(
             .map_err(|e| format!("Failed to write temp tar: {}", e))?;
 
         // Restore into volume
-        let output = Command::new("docker")
+        let output = silent_cmd("docker")
             .args([
                 "run", "--rm",
                 "-v", &format!("{}:/dest", new_volume_name),
@@ -670,7 +670,7 @@ pub async fn import_clone(
     // Step 8: Start the stack
     emit_progress(&app, "starting", "Starting services...", None, None);
 
-    let start_output = Command::new("docker")
+    let start_output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "up", "-d"])
         .current_dir(&install_dir)
         .output()

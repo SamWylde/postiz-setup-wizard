@@ -101,6 +101,8 @@ export function StatusDashboard() {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<string>("");
+  const [updatePercent, setUpdatePercent] = useState<number>(0);
   const [appVersion, setAppVersion] = useState<string>("");
   const [postizUpdate, setPostizUpdate] = useState<PostizUpdateInfo | null>(null);
   const [postizChecking, setPostizChecking] = useState(false);
@@ -145,6 +147,33 @@ export function StatusDashboard() {
     });
     return () => {
       unlisten.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
+  // Listen for wizard update status and progress
+  useEffect(() => {
+    const unlistenStatus = listen<string>("update-status", (event) => {
+      const status = event.payload;
+      if (status === "downloading") {
+        setUpdateStatus("Downloading update...");
+      } else if (status === "installing") {
+        setUpdateStatus("Installing update — app will restart...");
+      } else if (status === "error") {
+        setUpdateStatus("");
+      }
+    });
+    const unlistenProgress = listen<{ percent: number; downloaded: number; total: number }>(
+      "update-progress",
+      (event) => {
+        setUpdatePercent(event.payload.percent);
+        if (event.payload.percent > 0) {
+          setUpdateStatus(`Downloading update... ${event.payload.percent}%`);
+        }
+      },
+    );
+    return () => {
+      unlistenStatus.then((f) => f()).catch(() => {});
+      unlistenProgress.then((f) => f()).catch(() => {});
     };
   }, []);
 
@@ -478,6 +507,21 @@ export function StatusDashboard() {
             )}
           </div>
         </div>
+        {updateStatus && (
+          <div className="mt-3 pt-3 border-t border-gray-100">
+            <div className="flex items-center gap-2">
+              <p className="text-sm text-blue-600">{updateStatus}</p>
+              {updatePercent > 0 && updatePercent < 100 && (
+                <div className="flex-1 max-w-xs h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-blue-500 rounded-full transition-all"
+                    style={{ width: `${updatePercent}%` }}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
         {updateInfo?.body && (
           <div className="mt-3 pt-3 border-t border-gray-100">
             <p className="text-xs font-medium text-gray-500 mb-1">Release notes</p>

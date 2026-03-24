@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use tauri::{Emitter, State};
 
+use super::silent_cmd;
 use crate::state::SharedState;
 
 pub fn parse_env_file(contents: &str) -> HashMap<String, String> {
@@ -178,7 +178,7 @@ pub async fn apply_config_transaction(
     let _ = app.emit("docker-progress", "Config written. Restarting stack...");
 
     // Restart stack: docker compose down
-    let output = Command::new("docker")
+    let output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "down"])
         .current_dir(&install_path)
         .output()
@@ -194,7 +194,7 @@ pub async fn apply_config_transaction(
 
     // docker compose up
     let _ = app.emit("docker-progress", "Starting services with new config...");
-    let output = Command::new("docker")
+    let output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "up", "-d"])
         .current_dir(&install_path)
         .output()
@@ -213,11 +213,11 @@ pub async fn apply_config_transaction(
                 rb_err, env_path.display(), backup_path.display()
             ));
         }
-        let _ = Command::new("docker")
+        let _ = silent_cmd("docker")
             .args(["compose", "--env-file", "postiz.env", "down"])
             .current_dir(&install_path)
             .output();
-        let _ = Command::new("docker")
+        let _ = silent_cmd("docker")
             .args(["compose", "--env-file", "postiz.env", "up", "-d"])
             .current_dir(&install_path)
             .output();
@@ -258,12 +258,12 @@ pub async fn apply_config_transaction(
         }
 
         // Restart stack with old config
-        let _ = Command::new("docker")
+        let _ = silent_cmd("docker")
             .args(["compose", "--env-file", "postiz.env", "down"])
             .current_dir(&install_path)
             .output();
 
-        let _ = Command::new("docker")
+        let _ = silent_cmd("docker")
             .args(["compose", "--env-file", "postiz.env", "up", "-d"])
             .current_dir(&install_path)
             .output();

@@ -3,6 +3,7 @@ use std::process::Command;
 use sysinfo::{Disks, System};
 use tauri::State;
 
+use super::silent_cmd;
 use crate::state::SharedState;
 
 #[derive(Debug, Serialize, Clone)]
@@ -23,7 +24,7 @@ pub struct MachineState {
 }
 
 fn check_command(cmd: &str, args: &[&str]) -> bool {
-    Command::new(cmd).args(args).output().is_ok()
+    silent_cmd(cmd).args(args).output().is_ok()
 }
 
 /// Resolve a binary by checking PostizWizard local install first, then system PATH.
@@ -42,11 +43,11 @@ pub fn resolve_binary(name: &str) -> String {
 
 fn check_binary_available(name: &str, args: &[&str]) -> bool {
     let binary = resolve_binary(name);
-    Command::new(&binary).args(args).output().is_ok()
+    silent_cmd(&binary).args(args).output().is_ok()
 }
 
 fn get_command_output(cmd: &str, args: &[&str]) -> Option<String> {
-    Command::new(cmd)
+    silent_cmd(cmd)
         .args(args)
         .output()
         .ok()
@@ -60,7 +61,26 @@ fn get_command_output(cmd: &str, args: &[&str]) -> Option<String> {
 }
 
 #[tauri::command]
-pub fn scan_machine(state: State<SharedState>) -> Result<MachineState, String> {
+pub async fn scan_machine(state: State<'_, SharedState>) -> Result<MachineState, String> {
+    // Run all blocking shell commands off the main thread so the UI stays responsive
+    let (machine, existing_install) = tokio::task::spawn_blocking(move || {
+        scan_machine_blocking()
+    })
+    .await
+    .map_err(|e| format!("System scan panicked: {}", e))?;
+
+    // Update state with any existing install info (needs State which isn't Send)
+    {
+        let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref path) = existing_install {
+            app_state.install_path = Some(std::path::PathBuf::from(path));
+        }
+    }
+
+    Ok(machine)
+}
+
+fn scan_machine_blocking() -> (MachineState, Option<String>) {
     // Check Windows version (we're Windows-only, so this should always be true in practice)
     let windows_version_ok = true;
 
@@ -70,16 +90,14 @@ pub fn scan_machine(state: State<SharedState>) -> Result<MachineState, String> {
     // Check Docker
     let docker_installed = check_command("docker", &["--version"]);
 
-    let docker_running = get_command_output("docker", &["info"]).is_some();
+    // Single docker info call — used for both "running" and "linux mode" checks
+    let docker_info = get_command_output("docker", &["info"]);
+    let docker_running = docker_info.is_some();
 
     // Check if Docker is in Linux container mode
-    let docker_linux_mode = if docker_running {
-        get_command_output("docker", &["info"])
-            .map(|info| info.contains("linux") || info.contains("Linux"))
-            .unwrap_or(false)
-    } else {
-        false
-    };
+    let docker_linux_mode = docker_info
+        .map(|info| info.contains("linux") || info.contains("Linux"))
+        .unwrap_or(false);
 
     // Check tunnel providers
     let cloudflared_installed = check_command("cloudflared", &["--version"]);
@@ -133,21 +151,13 @@ pub fn scan_machine(state: State<SharedState>) -> Result<MachineState, String> {
 
     // Reboot detection: check the Windows PendingFileRenameOperations registry key
     // which is set after WSL install or other system-level changes.
-    let reboot_required = Command::new("reg")
+    let reboot_required = silent_cmd("reg")
         .args(["query", r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager", "/v", "PendingFileRenameOperations"])
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    // Update state with any existing install info
-    {
-        let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(ref path) = existing_install {
-            app_state.install_path = Some(std::path::PathBuf::from(path));
-        }
-    }
-
-    Ok(MachineState {
+    let machine = MachineState {
         windows_version_ok,
         wsl2_installed,
         docker_installed,
@@ -159,9 +169,11 @@ pub fn scan_machine(state: State<SharedState>) -> Result<MachineState, String> {
         ssh_available,
         disk_space_gb,
         ram_available_gb,
-        existing_install,
+        existing_install: existing_install.clone(),
         reboot_required,
-    })
+    };
+
+    (machine, existing_install)
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -179,7 +191,7 @@ pub enum BootstrapAction {
 pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
     match action {
         BootstrapAction::InstallWsl2 => {
-            let output = Command::new("wsl")
+            let output = silent_cmd("wsl")
                 .args(["--install", "--no-distribution"])
                 .output()
                 .map_err(|e| format!("Failed to run wsl --install: {}", e))?;
@@ -199,7 +211,7 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
             let installer_path = temp_dir.join("DockerDesktopInstaller.exe");
 
             // Download using PowerShell
-            let output = Command::new("powershell")
+            let output = silent_cmd("powershell")
                 .args([
                     "-Command",
                     &format!(
@@ -256,7 +268,7 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
                 .ok_or_else(|| {
                     "DockerCli.exe not found. Please reinstall Docker Desktop.".to_string()
                 })?;
-            let output = Command::new(cli_path)
+            let output = silent_cmd(cli_path)
             .args(["-SwitchLinuxEngine"])
             .output()
             .map_err(|e| format!("Failed to switch to Linux containers: {}", e))?;
@@ -271,7 +283,7 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
             }
         }
         BootstrapAction::InstallCloudflared => {
-            let output = Command::new("winget")
+            let output = silent_cmd("winget")
                 .args(["install", "Cloudflare.cloudflared", "--accept-source-agreements", "--accept-package-agreements"])
                 .output()
                 .map_err(|e| format!("Failed to install cloudflared: {}", e))?;
@@ -296,7 +308,7 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
             let download_url = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip";
 
             // Download
-            let output = Command::new("powershell")
+            let output = silent_cmd("powershell")
                 .args([
                     "-Command",
                     &format!(
@@ -316,7 +328,7 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
             }
 
             // Extract
-            let output = Command::new("powershell")
+            let output = silent_cmd("powershell")
                 .args([
                     "-Command",
                     &format!(
@@ -350,7 +362,7 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
             let zip_path = std::env::temp_dir().join("zrok.zip");
 
             // Fetch latest release URL from GitHub API
-            let release_output = Command::new("powershell")
+            let release_output = silent_cmd("powershell")
                 .args([
                     "-Command",
                     "Invoke-RestMethod -Uri 'https://api.github.com/repos/openziti/zrok/releases/latest' -UseBasicParsing | ConvertTo-Json -Depth 10",
@@ -374,7 +386,7 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
                 .to_string();
 
             // Download
-            let output = Command::new("powershell")
+            let output = silent_cmd("powershell")
                 .args([
                     "-Command",
                     &format!(
@@ -394,7 +406,7 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
             }
 
             // Extract
-            let output = Command::new("powershell")
+            let output = silent_cmd("powershell")
                 .args([
                     "-Command",
                     &format!(

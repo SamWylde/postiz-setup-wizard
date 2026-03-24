@@ -1,8 +1,8 @@
 use std::net::TcpListener;
 use std::path::PathBuf;
-use std::process::Command;
 use tauri::State;
 
+use super::silent_cmd;
 use crate::state::{InstallSnapshot, PreflightCheck, PreflightResult, SharedState};
 
 #[tauri::command]
@@ -125,14 +125,14 @@ pub async fn get_install_snapshot(
         .unwrap_or(false);
 
     // 4. Check docker installed
-    let docker_installed = Command::new("docker")
+    let docker_installed = silent_cmd("docker")
         .arg("--version")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
 
     // 5. Check docker running
-    let docker_running = Command::new("docker")
+    let docker_running = silent_cmd("docker")
         .arg("info")
         .output()
         .map(|o| o.status.success())
@@ -144,7 +144,7 @@ pub async fn get_install_snapshot(
 
     if install_exists && docker_running {
         if let Some(ref path) = install_path {
-            let output = Command::new("docker")
+            let output = silent_cmd("docker")
                 .args(["compose", "ps", "--format", "json"])
                 .current_dir(path)
                 .output();
@@ -192,7 +192,7 @@ pub async fn get_install_snapshot(
     // 8. Check tunnel alive (CSV format for reliable PID matching)
     let tunnel_alive = tunnel_pid
         .map(|pid| {
-            Command::new("tasklist")
+            silent_cmd("tasklist")
                 .args(["/FI", &format!("PID eq {}", pid), "/NH", "/FO", "CSV"])
                 .output()
                 .map(|o| {
@@ -334,7 +334,7 @@ pub async fn validate_preflight(
     });
 
     // 4. Docker installed
-    let docker_installed = Command::new("docker")
+    let docker_installed = silent_cmd("docker")
         .arg("--version")
         .output()
         .map(|o| o.status.success())
@@ -350,7 +350,7 @@ pub async fn validate_preflight(
     });
 
     // 5. Docker running
-    let docker_info_output = Command::new("docker").arg("info").output();
+    let docker_info_output = silent_cmd("docker").arg("info").output();
     let docker_running = docker_info_output
         .as_ref()
         .map(|o| o.status.success())
@@ -411,16 +411,16 @@ pub async fn validate_preflight(
 
     // 9. Tunnel provider check (only for temporary tunnel mode)
     if tunnel_mode == "temporary" {
-        let cf_installed = Command::new("cloudflared")
+        let cf_installed = silent_cmd("cloudflared")
             .arg("--version")
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
         let ngrok_installed = crate::commands::bootstrap::resolve_binary("ngrok") != "ngrok"
-            || Command::new("ngrok").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
+            || silent_cmd("ngrok").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
         let zrok_installed = crate::commands::bootstrap::resolve_binary("zrok") != "zrok"
-            || Command::new("zrok").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
-        let ssh_available = Command::new("ssh").arg("-V").output().is_ok();
+            || silent_cmd("zrok").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
+        let ssh_available = silent_cmd("ssh").arg("-V").output().is_ok();
         let any_provider = cf_installed || ngrok_installed || zrok_installed || ssh_available;
         checks.push(PreflightCheck {
             name: "Tunnel provider available".to_string(),

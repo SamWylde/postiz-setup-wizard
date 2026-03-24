@@ -1,8 +1,9 @@
 use serde::Serialize;
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use tauri::{Emitter, State};
 
+use super::silent_cmd;
 use crate::state::SharedState;
 
 #[derive(Debug, Serialize, Clone)]
@@ -21,7 +22,7 @@ pub async fn check_postiz_update(
     let image = "ghcr.io/gitroomhq/postiz-app:latest";
 
     // Get local image digest
-    let local_output = Command::new("docker")
+    let local_output = silent_cmd("docker")
         .args([
             "image",
             "inspect",
@@ -44,7 +45,7 @@ pub async fn check_postiz_update(
     };
 
     // Get remote image digest via docker manifest inspect
-    let remote_output = Command::new("docker")
+    let remote_output = silent_cmd("docker")
         .args(["manifest", "inspect", image, "--verbose"])
         .output()
         .map_err(|e| format!("Failed to check remote image: {}", e))?;
@@ -61,7 +62,7 @@ pub async fn check_postiz_update(
     } else {
         // Fallback: try `docker pull --dry-run` equivalent
         // We'll use `docker manifest inspect` without --verbose
-        let simple_output = Command::new("docker")
+        let simple_output = silent_cmd("docker")
             .args(["manifest", "inspect", image])
             .output()
             .ok();
@@ -147,7 +148,7 @@ pub async fn upgrade_postiz(
         "message": "Saving current image as rollback snapshot..."
     }));
 
-    let inspect_output = Command::new("docker")
+    let inspect_output = silent_cmd("docker")
         .args(["image", "inspect", image, "--format", "{{.Id}}"])
         .output()
         .map_err(|e| format!("Failed to inspect current image: {}", e))?;
@@ -158,7 +159,7 @@ pub async fn upgrade_postiz(
         return Err("Cannot determine current Postiz image ID. Is Postiz installed?".to_string());
     };
 
-    let tag_output = Command::new("docker")
+    let tag_output = silent_cmd("docker")
         .args(["tag", &current_image_id, rollback_tag])
         .output()
         .map_err(|e| format!("Failed to tag rollback image: {}", e))?;
@@ -174,7 +175,7 @@ pub async fn upgrade_postiz(
         "message": "Downloading updated Postiz app image..."
     }));
 
-    let mut child = Command::new("docker")
+    let mut child = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "pull", "postiz"])
         .current_dir(&path)
         .stdout(Stdio::piped())
@@ -218,7 +219,7 @@ pub async fn upgrade_postiz(
 
     if !status.success() {
         // Clean up rollback tag on pull failure
-        let _ = Command::new("docker").args(["rmi", rollback_tag]).output();
+        let _ = silent_cmd("docker").args(["rmi", rollback_tag]).output();
         return Err("Failed to pull updated Postiz image. Check your internet connection.".to_string());
     }
 
@@ -228,7 +229,7 @@ pub async fn upgrade_postiz(
         "message": "Recreating Postiz app container..."
     }));
 
-    let up_output = Command::new("docker")
+    let up_output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "up", "-d", "--no-deps", "postiz"])
         .current_dir(&path)
         .output()
@@ -241,12 +242,12 @@ pub async fn upgrade_postiz(
             "phase": "rollback",
             "message": "Container recreation failed — rolling back..."
         }));
-        let _ = Command::new("docker").args(["tag", rollback_tag, image]).output();
-        let _ = Command::new("docker")
+        let _ = silent_cmd("docker").args(["tag", rollback_tag, image]).output();
+        let _ = silent_cmd("docker")
             .args(["compose", "--env-file", "postiz.env", "up", "-d", "--no-deps", "postiz"])
             .current_dir(&path)
             .output();
-        let _ = Command::new("docker").args(["rmi", rollback_tag]).output();
+        let _ = silent_cmd("docker").args(["rmi", rollback_tag]).output();
         return Err(format!("Failed to start updated Postiz container (rolled back): {}", stderr));
     }
 
@@ -269,7 +270,7 @@ pub async fn upgrade_postiz(
         }));
 
         // Check all containers are still running
-        let ps_output = Command::new("docker")
+        let ps_output = silent_cmd("docker")
             .args(["compose", "ps", "--format", "json"])
             .current_dir(&path)
             .output();
@@ -312,7 +313,7 @@ pub async fn upgrade_postiz(
 
     if healthy {
         // Success — clean up rollback tag
-        let _ = Command::new("docker").args(["rmi", rollback_tag]).output();
+        let _ = silent_cmd("docker").args(["rmi", rollback_tag]).output();
         let _ = app.emit("upgrade-progress", serde_json::json!({
             "phase": "complete",
             "message": "Upgrade complete! Postiz app is healthy."
@@ -326,12 +327,12 @@ pub async fn upgrade_postiz(
         "message": "Health checks failed — rolling back to previous version..."
     }));
 
-    let _ = Command::new("docker").args(["tag", rollback_tag, image]).output();
-    let _ = Command::new("docker")
+    let _ = silent_cmd("docker").args(["tag", rollback_tag, image]).output();
+    let _ = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "up", "-d", "--no-deps", "postiz"])
         .current_dir(&path)
         .output();
-    let _ = Command::new("docker").args(["rmi", rollback_tag]).output();
+    let _ = silent_cmd("docker").args(["rmi", rollback_tag]).output();
 
     Err("Upgrade health checks timed out — rolled back to previous version. Check logs for details.".to_string())
 }

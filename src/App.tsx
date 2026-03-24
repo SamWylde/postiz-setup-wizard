@@ -189,9 +189,9 @@ function App() {
     };
   }, []);
 
-  // Check for updates after startup settles (only on dashboard/recovery)
+  // Check for updates after startup settles (all views except loading)
   useEffect(() => {
-    if (view !== "dashboard" && view !== "recovery") return;
+    if (view === "loading") return;
 
     const timer = setTimeout(async () => {
       try {
