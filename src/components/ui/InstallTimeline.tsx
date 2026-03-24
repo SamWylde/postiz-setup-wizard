@@ -1,4 +1,5 @@
 import { Check, Loader2, Circle, AlertCircle } from "lucide-react";
+import type { PullProgress } from "../../lib/tauri";
 
 export type InstallPhase =
   | "idle"
@@ -84,6 +85,7 @@ interface InstallTimelineProps {
   elapsed: number;
   progressDetail?: string;
   errorMessage?: string | null;
+  pullProgress?: PullProgress | null;
 }
 
 function formatElapsed(seconds: number): string {
@@ -99,6 +101,7 @@ export function InstallTimeline({
   elapsed,
   progressDetail,
   errorMessage,
+  pullProgress,
 }: InstallTimelineProps) {
   if (currentPhase === "idle") return null;
 
@@ -152,10 +155,43 @@ export function InstallTimeline({
               {state === "active" && (
                 <div className="mt-1 space-y-1">
                   <p className="text-xs text-gray-500">{phase.guidance}</p>
-                  <p className="text-xs text-blue-600 font-medium">
-                    {formatElapsed(elapsed)}
-                    {progressDetail ? ` — ${progressDetail}` : ""}
-                  </p>
+
+                  {/* Pull progress bar and service list */}
+                  {phase.id === "pulling" && pullProgress && pullProgress.total_layers > 0 ? (
+                    <div className="space-y-2">
+                      <p className="text-xs text-blue-600 font-medium">
+                        {pullProgress.message}
+                      </p>
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex-1 h-3 bg-gray-200 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-500 ease-out"
+                            style={{ width: `${Math.round((pullProgress.completed_layers / pullProgress.total_layers) * 100)}%` }}
+                          />
+                        </div>
+                        <span className="text-xs text-blue-700 font-semibold tabular-nums whitespace-nowrap min-w-[3ch] text-right">
+                          {Math.round((pullProgress.completed_layers / pullProgress.total_layers) * 100)}%
+                        </span>
+                      </div>
+                      {pullProgress.completed_services.length > 0 && (
+                        <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                          {pullProgress.completed_services.map((svc) => (
+                            <span key={svc} className="text-xs text-green-600 font-medium">
+                              &#10003; {svc}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <p className="text-xs text-gray-400">
+                        {formatElapsed(elapsed)} elapsed
+                      </p>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-blue-600 font-medium">
+                      {formatElapsed(elapsed)}
+                      {progressDetail ? ` — ${progressDetail}` : ""}
+                    </p>
+                  )}
                 </div>
               )}
 

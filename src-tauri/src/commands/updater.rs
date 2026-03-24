@@ -1,8 +1,10 @@
 use serde::Serialize;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::Emitter;
 use tauri_plugin_updater::UpdaterExt;
+
+static UPDATING: AtomicBool = AtomicBool::new(false);
 
 #[derive(Serialize)]
 pub struct UpdateInfo {
@@ -59,16 +61,29 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, Strin
 
 #[tauri::command]
 pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    if UPDATING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+        return Err("Update already in progress".to_string());
+    }
+
     let _ = app.emit("update-status", "checking");
 
-    let updater = app.updater().map_err(|e| format!("Updater not available: {}", e))?;
+    let updater = app.updater().map_err(|e| {
+        UPDATING.store(false, Ordering::SeqCst);
+        format!("Updater not available: {}", e)
+    })?;
 
     let update = updater
         .check()
         .await
-        .map_err(|e| format!("Failed to check for updates: {}", e))?;
+        .map_err(|e| {
+            UPDATING.store(false, Ordering::SeqCst);
+            format!("Failed to check for updates: {}", e)
+        })?;
 
-    let update = update.ok_or("No update available")?;
+    let update = update.ok_or_else(|| {
+        UPDATING.store(false, Ordering::SeqCst);
+        "No update available".to_string()
+    })?;
 
     let _ = app.emit("update-status", "downloading");
 
@@ -101,6 +116,7 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
         )
         .await
         .map_err(|e| {
+            UPDATING.store(false, Ordering::SeqCst);
             let _ = app.emit("update-status", "error");
             format!("Failed to download update: {}", e)
         })?;
@@ -110,6 +126,7 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     let _ = app.emit("update-status", "installing");
 
     update.install(bytes).map_err(|e| {
+        UPDATING.store(false, Ordering::SeqCst);
         let _ = app.emit("update-status", "error");
         format!("Failed to install update: {}", e)
     })?;

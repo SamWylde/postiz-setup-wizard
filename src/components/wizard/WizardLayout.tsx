@@ -4,6 +4,7 @@ import { getCurrentAppVersion, installUpdate } from "../../lib/tauri";
 import { listen } from "@tauri-apps/api/event";
 import { StepIndicator } from "./StepIndicator";
 import { Activity, Wrench } from "lucide-react";
+import { showToast } from "../ui/Toast";
 
 const steps = [
   { name: "Prepare Computer", description: "Check prerequisites" },
@@ -49,8 +50,8 @@ export function WizardLayout({ children, view = "wizard" }: WizardLayoutProps) {
   useEffect(() => {
     const unlistenStatus = listen<string>("update-status", (event) => {
       const status = event.payload;
-      if (status === "downloading") setInstallStatus("Downloading...");
-      else if (status === "installing") setInstallStatus("Installing — app will restart...");
+      if (status === "downloading") { setInstalling(true); setInstallStatus("Downloading..."); }
+      else if (status === "installing") { setInstalling(true); setInstallStatus("Installing — app will restart..."); }
       else if (status === "error") { setInstallStatus(""); setInstalling(false); }
     });
     const unlistenProgress = listen<{ percent: number; downloaded: number; total: number }>("update-progress", (event) => {
@@ -68,9 +69,10 @@ export function WizardLayout({ children, view = "wizard" }: WizardLayoutProps) {
     setInstalling(true);
     try {
       await installUpdate();
-    } catch {
+    } catch (err) {
       setInstalling(false);
       setInstallStatus("");
+      showToast(`Update failed: ${String(err)}`, "error");
     }
   };
 

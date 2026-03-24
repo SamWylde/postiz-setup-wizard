@@ -19,7 +19,7 @@ import {
 } from "../lib/tauri";
 import { useWizardStore } from "../store/wizardStore";
 import { open } from "@tauri-apps/plugin-shell";
-import { listen } from "@tauri-apps/api/event";
+import { listen, emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
@@ -214,7 +214,9 @@ export function StatusDashboard() {
     try {
       const info = await checkForUpdate();
       setUpdateInfo(info);
-      if (!info.available) {
+      if (info.available) {
+        await emit("update-info-discovered", info);
+      } else {
         showToast("You're running the latest version.", "success");
       }
     } catch (err) {

@@ -255,6 +255,14 @@ export const onUpgradeProgress = (
   callback: (event: { payload: UpgradeProgress }) => void,
 ): Promise<UnlistenFn> => listen("upgrade-progress", callback);
 
+// Pull progress
+export interface PullProgress {
+  total_layers: number;
+  completed_layers: number;
+  message: string;
+  completed_services: string[];
+}
+
 // Event listeners
 export const onDockerProgress = (
   callback: (event: { payload: string }) => void,
@@ -263,6 +271,10 @@ export const onDockerProgress = (
 export const onDockerLog = (
   callback: (event: { payload: string }) => void,
 ): Promise<UnlistenFn> => listen("docker-log", callback);
+
+export const onDockerPullProgress = (
+  callback: (event: { payload: PullProgress }) => void,
+): Promise<UnlistenFn> => listen("docker-pull-progress", callback);
 
 export const onTunnelUrl = (
   callback: (event: { payload: string }) => void,

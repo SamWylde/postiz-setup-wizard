@@ -12,6 +12,8 @@ import {
   saveResumeState,
   onDockerProgress,
   onDockerLog,
+  onDockerPullProgress,
+  type PullProgress,
 } from "../lib/tauri";
 import { friendlyError } from "../lib/errors";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
@@ -48,6 +50,7 @@ export function InstallPostiz() {
   } = useWizardStore();
 
   const [progressDetail, setProgressDetail] = useState("");
+  const [pullProgress, setPullProgress] = useState<PullProgress | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -81,10 +84,14 @@ export function InstallPostiz() {
       setProgressDetail(e.payload),
     );
     const unlistenLog = onDockerLog((e) => addDockerLog(e.payload));
+    const unlistenPull = onDockerPullProgress((e) =>
+      setPullProgress(e.payload),
+    );
 
     return () => {
       unlistenProgress.then((f) => f()).catch(() => {});
       unlistenLog.then((f) => f()).catch(() => {});
+      unlistenPull.then((f) => f()).catch(() => {});
     };
   }, []);
 
@@ -108,6 +115,7 @@ export function InstallPostiz() {
     setInstallStatus("preparing");
     setInstallError(null);
     setErrorPhase(null);
+    setPullProgress(null);
     setInstallPhase("preflight");
 
     try {
@@ -195,6 +203,7 @@ export function InstallPostiz() {
     setInstallError(null);
     setInstallPhase("idle");
     setErrorPhase(null);
+    setPullProgress(null);
   };
 
   if (showImport) {
@@ -316,6 +325,7 @@ export function InstallPostiz() {
               elapsed={elapsed}
               progressDetail={progressDetail}
               errorMessage={installError}
+              pullProgress={pullProgress}
             />
 
             <div className="flex gap-2">
@@ -333,6 +343,7 @@ export function InstallPostiz() {
                     setInstallError(null);
                     setInstallPhase("idle");
                     setErrorPhase(null);
+                    setPullProgress(null);
                   }}
                 >
                   Try again

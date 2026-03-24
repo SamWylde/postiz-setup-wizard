@@ -1,10 +1,21 @@
+use regex::Regex;
 use serde::Serialize;
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
 use std::process::Stdio;
+use std::time::Instant;
 use tauri::{Emitter, State};
 
 use super::{sanitize_log_line, silent_cmd};
 use crate::state::SharedState;
+
+#[derive(Clone, Serialize)]
+struct PullProgress {
+    total_layers: usize,
+    completed_layers: usize,
+    message: String,
+    completed_services: Vec<String>,
+}
 
 #[derive(Debug, Serialize, Clone)]
 pub struct ContainerInfo {
@@ -49,13 +60,111 @@ pub async fn start_stack(
     let pid = child.id();
     state.lock().unwrap_or_else(|e| e.into_inner()).docker_child_pid = Some(pid);
 
-    // Stream stderr for progress
+    // Stream stderr for progress, parsing pull progress lines
     if let Some(stderr) = child.stderr.take() {
         let app_clone = app.clone();
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
+            // Matches layer progress lines like "9e81dfb60284 Extracting 37B"
+            let layer_re = Regex::new(
+                r"^\s*([0-9a-f]{12})\s+(Downloading|Extracting|Verifying Checksum|Download complete|Pull complete|Already exists|Waiting)"
+            ).unwrap();
+            let pulled_re = Regex::new(r"^\s*(?:\[\+\]\s+)?(\S+)\s+Pulled").unwrap();
+            let mut completed_services: Vec<String> = Vec::new();
+
+            // Track layer states: hash -> current action
+            let mut layer_states: HashMap<String, String> = HashMap::new();
+            // Track last emit time per hash for throttling
+            let mut last_emit_time: HashMap<String, Instant> = HashMap::new();
+            let throttle_duration = std::time::Duration::from_secs(1);
+
             for line in reader.lines().map_while(Result::ok) {
-                let _ = app_clone.emit("docker-log", sanitize_log_line(&line));
+                if let Some(caps) = layer_re.captures(&line) {
+                    let hash = caps[1].to_string();
+                    let action = caps[2].to_string();
+
+                    let previous_action = layer_states.get(&hash).cloned();
+                    let is_new_hash = previous_action.is_none();
+                    let is_terminal = action == "Pull complete" || action == "Already exists";
+                    let action_changed = previous_action.as_deref() != Some(&action);
+
+                    // Update layer state
+                    layer_states.insert(hash.clone(), action.clone());
+
+                    // Emit to docker-log only for: new hash, state transitions to terminal
+                    if is_new_hash || is_terminal {
+                        let _ = app_clone.emit("docker-log", sanitize_log_line(&line));
+                    }
+
+                    // Throttle per-hash progress emissions (for non-terminal lines)
+                    if !is_terminal {
+                        let now = Instant::now();
+                        let should_emit = match last_emit_time.get(&hash) {
+                            Some(last) => now.duration_since(*last) >= throttle_duration,
+                            None => true,
+                        };
+                        if should_emit {
+                            last_emit_time.insert(hash.clone(), now);
+                        }
+                    }
+
+                    // Compute and emit structured pull progress
+                    let total_layers = layer_states.len();
+                    let completed_layers = layer_states.values()
+                        .filter(|a| *a == "Pull complete" || *a == "Already exists")
+                        .count();
+
+                    // Build action summary
+                    let mut action_counts: HashMap<&str, usize> = HashMap::new();
+                    for a in layer_states.values() {
+                        if a != "Pull complete" && a != "Already exists" {
+                            *action_counts.entry(a.as_str()).or_insert(0) += 1;
+                        }
+                    }
+                    let summary_parts: Vec<String> = action_counts.iter()
+                        .map(|(a, c)| format!("{} {} layers", a, c))
+                        .collect();
+                    let summary = if summary_parts.is_empty() {
+                        String::new()
+                    } else {
+                        summary_parts.join(", ")
+                    };
+
+                    // Determine the dominant current action for the progress message
+                    let progress_msg = if completed_layers == total_layers {
+                        format!("All {} layers complete", total_layers)
+                    } else if action_counts.get("Extracting").copied().unwrap_or(0) > 0 {
+                        format!("Extracting layers ({}/{} complete)...", completed_layers, total_layers)
+                    } else {
+                        format!("Pulling layers ({}/{} complete)...", completed_layers, total_layers)
+                    };
+
+                    // Only emit structured progress on action changes or terminal states
+                    if action_changed || is_terminal {
+                        let _ = app_clone.emit("docker-progress", &progress_msg);
+                        let _ = app_clone.emit("docker-pull-progress", PullProgress {
+                            total_layers,
+                            completed_layers,
+                            message: if summary.is_empty() {
+                                progress_msg.clone()
+                            } else {
+                                format!("{} ({})", progress_msg, summary)
+                            },
+                            completed_services: completed_services.clone(),
+                        });
+                    }
+                } else {
+                    // Non-layer line: always emit to log
+                    let _ = app_clone.emit("docker-log", sanitize_log_line(&line));
+
+                    // Parse "servicename Pulled" lines
+                    if let Some(caps) = pulled_re.captures(&line) {
+                        let service = caps[1].to_string();
+                        if !completed_services.contains(&service) {
+                            completed_services.push(service);
+                        }
+                    }
+                }
             }
         });
     }
@@ -84,6 +193,15 @@ pub async fn start_stack(
                 .to_string(),
         );
     }
+
+    let _ = app.emit("docker-progress", "Cleaning up any stale containers...");
+
+    // Clean up stale containers from a previous failed run to avoid
+    // "container name already in use" errors on retry/reinstall.
+    let _ = silent_cmd("docker")
+        .args(["compose", "--env-file", "postiz.env", "down", "--remove-orphans"])
+        .current_dir(&install_path)
+        .output();
 
     let _ = app.emit("docker-progress", "Starting Postiz services...");
 
