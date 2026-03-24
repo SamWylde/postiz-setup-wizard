@@ -22,6 +22,7 @@ import { Input } from "../components/ui/Input";
 import { CopyField } from "../components/ui/CopyField";
 import { StatusIndicator } from "../components/ui/StatusIndicator";
 import { NavigationButtons } from "../components/wizard/NavigationButtons";
+import { open } from "@tauri-apps/plugin-shell";
 import { AlertTriangle, Globe, Link, Monitor, ChevronDown, Download } from "lucide-react";
 
 type TunnelMode = "temporary" | "permanent" | "none";
@@ -482,7 +483,10 @@ export function CreateWebLink() {
                 secret
               />
               <p className="text-xs text-gray-500 mt-1">
-                Get a free authtoken at ngrok.com/signup
+                Get a free authtoken at{" "}
+                <button onClick={() => open("https://dashboard.ngrok.com/signup")} className="text-blue-600 hover:text-blue-700 underline">
+                  ngrok.com/signup
+                </button>
               </p>
             </Card>
           )}
@@ -493,7 +497,7 @@ export function CreateWebLink() {
                 and enable your environment before sharing:
               </p>
               <ol className="text-sm text-gray-600 list-decimal list-inside space-y-1 mb-3">
-                <li>Sign up at <span className="font-mono text-blue-600">zrok.io</span> and copy your enable token</li>
+                <li>Sign up at <button onClick={() => open("https://zrok.io")} className="font-mono text-blue-600 hover:text-blue-700 underline">zrok.io</button> and copy your enable token</li>
                 <li>Open a terminal and run: <code className="bg-gray-100 px-1 py-0.5 rounded text-xs">zrok enable YOUR_TOKEN</code></li>
               </ol>
               <p className="text-xs text-gray-500">
@@ -511,7 +515,11 @@ export function CreateWebLink() {
                 secret
               />
               <p className="text-xs text-gray-500 mt-1">
-                Get a token at pinggy.io for a persistent URL
+                Get a token at{" "}
+                <button onClick={() => open("https://pinggy.io")} className="text-blue-600 hover:text-blue-700 underline">
+                  pinggy.io
+                </button>{" "}
+                for a persistent URL
               </p>
             </Card>
           )}
@@ -572,9 +580,21 @@ export function CreateWebLink() {
             )}
 
             {tunnelStatus === "error" && (
-              <Button variant="secondary" onClick={handleStartTunnel}>
-                Try again
-              </Button>
+              <div className="flex gap-2">
+                <Button variant="secondary" onClick={handleStartTunnel}>
+                  Try again
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setTunnelStatus("idle");
+                    setTunnelUrl(null);
+                    setStatusMessage("");
+                  }}
+                >
+                  Change provider
+                </Button>
+              </div>
             )}
           </div>
         </Card>

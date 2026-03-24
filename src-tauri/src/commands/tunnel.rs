@@ -366,7 +366,7 @@ async fn start_pinggy(
         "ssh",
         &args,
         &[],
-        UrlSource::Stdout(r"https://[a-z0-9-]+[.]a[.]pinggy[.]link".to_string()),
+        UrlSource::Stdout(r"https://[a-z0-9.-]+\.pinggy\.link".to_string()),
         app,
     )?;
 

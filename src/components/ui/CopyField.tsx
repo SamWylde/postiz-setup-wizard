@@ -1,13 +1,16 @@
 import { useState } from "react";
-import { Copy, Check } from "lucide-react";
+import { Copy, Check, ExternalLink } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { open } from "@tauri-apps/plugin-shell";
 
 interface CopyFieldProps {
   value: string;
   label?: string;
+  openable?: boolean;
 }
 
-export function CopyField({ value, label }: CopyFieldProps) {
+export function CopyField({ value, label, openable }: CopyFieldProps) {
+  const isUrl = openable ?? value.startsWith("http");
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
@@ -37,6 +40,15 @@ export function CopyField({ value, label }: CopyFieldProps) {
         <div className="flex-1 rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm font-mono text-gray-900 select-all overflow-x-auto">
           {value}
         </div>
+        {isUrl && (
+          <button
+            onClick={() => open(value)}
+            className="shrink-0 rounded-lg border border-gray-300 p-2 text-gray-500 hover:bg-gray-50 hover:text-blue-600 transition-colors"
+            title="Open in browser"
+          >
+            <ExternalLink className="h-4 w-4" />
+          </button>
+        )}
         <button
           onClick={handleCopy}
           className="shrink-0 rounded-lg border border-gray-300 p-2 text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors"
