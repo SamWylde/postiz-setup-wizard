@@ -213,7 +213,7 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
                 .args([
                     "-Command",
                     &format!(
-                        "Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
+                        "$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
                         download_url,
                         installer_path.display()
                     ),
@@ -303,14 +303,14 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
                 .map_err(|e| format!("Failed to create ngrok directory: {}", e))?;
 
             let zip_path = std::env::temp_dir().join("ngrok.zip");
-            let download_url = "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip";
+            let download_url = "https://bin.ngrok.com/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip";
 
             // Download
             let output = silent_cmd("powershell")
                 .args([
                     "-Command",
                     &format!(
-                        "Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
+                        "$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
                         download_url,
                         zip_path.display()
                     ),
@@ -357,7 +357,7 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
             std::fs::create_dir_all(&install_dir)
                 .map_err(|e| format!("Failed to create zrok directory: {}", e))?;
 
-            let zip_path = std::env::temp_dir().join("zrok.zip");
+            let archive_path = std::env::temp_dir().join("zrok.tar.gz");
 
             // Fetch latest release URL from GitHub API
             let release_output = silent_cmd("powershell")
@@ -373,9 +373,10 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
             }
 
             let release_json = String::from_utf8_lossy(&release_output.stdout);
+            // zrok ships Windows as .tar.gz (not .zip) since v2.0.0
             let download_url = release_json
                 .lines()
-                .find(|l| l.contains("browser_download_url") && l.contains("windows") && l.contains("amd64") && l.contains(".zip"))
+                .find(|l| l.contains("browser_download_url") && l.contains("windows") && l.contains("amd64"))
                 .and_then(|l| {
                     l.split('"')
                         .find(|s| s.starts_with("https://"))
@@ -388,9 +389,9 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
                 .args([
                     "-Command",
                     &format!(
-                        "Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
+                        "$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
                         download_url,
-                        zip_path.display()
+                        archive_path.display()
                     ),
                 ])
                 .output()
@@ -403,20 +404,18 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
                 ));
             }
 
-            // Extract
-            let output = silent_cmd("powershell")
+            // Extract .tar.gz using tar (available on Windows 10+)
+            let output = silent_cmd("tar")
                 .args([
-                    "-Command",
-                    &format!(
-                        "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                        zip_path.display(),
-                        install_dir.display()
-                    ),
+                    "-xzf",
+                    &archive_path.to_string_lossy(),
+                    "-C",
+                    &install_dir.to_string_lossy(),
                 ])
                 .output()
                 .map_err(|e| format!("Failed to extract zrok: {}", e))?;
 
-            let _ = std::fs::remove_file(&zip_path);
+            let _ = std::fs::remove_file(&archive_path);
 
             if output.status.success() && install_dir.join("zrok.exe").exists() {
                 Ok("zrok installed successfully.".to_string())

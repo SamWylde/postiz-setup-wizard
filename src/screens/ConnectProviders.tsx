@@ -126,21 +126,27 @@ function ProviderModal({
 
         {/* Content */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {/* Portal link — prominent banner */}
+          {provider.portalUrl && (
+            <div className="rounded-lg bg-blue-50 border border-blue-200 p-4 flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-blue-900">Developer Portal</p>
+                <p className="text-xs text-blue-700 mt-0.5">Create your app and get your credentials here</p>
+              </div>
+              <button
+                onClick={() => open(provider.portalUrl)}
+                className="shrink-0 inline-flex items-center gap-2 rounded-lg bg-blue-600 text-white px-4 py-2 text-sm font-medium hover:bg-blue-700 transition-colors"
+              >
+                Open Portal <ExternalLink className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
           {/* Instructions */}
           <div>
-            <div className="flex items-center gap-2 mb-3">
-              <h4 className="text-sm font-medium text-gray-700">
-                Setup Instructions
-              </h4>
-              {provider.portalUrl && (
-                <button
-                  onClick={() => open(provider.portalUrl)}
-                  className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700"
-                >
-                  Open portal <ExternalLink className="h-3 w-3" />
-                </button>
-              )}
-            </div>
+            <h4 className="text-sm font-medium text-gray-700 mb-3">
+              Setup Instructions
+            </h4>
             <ol className="space-y-3">
               {provider.instructions.map((step, i) => (
                 <li key={i} className="flex gap-3">
