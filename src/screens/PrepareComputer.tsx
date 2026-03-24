@@ -18,6 +18,7 @@ export function PrepareComputer() {
   const checkMachine = async () => {
     setBootstrapStatus("checking");
     setScanError(null);
+    setWslNeedsRestart(false);
     try {
       const state = await scanMachine();
       setMachineState(state);

@@ -84,6 +84,36 @@ pub fn sanitize_log_line(line: &str) -> String {
     result
 }
 
+/// Parse `docker compose ps --format json` output, handling both NDJSON
+/// (one JSON object per line — Docker Compose v2.21+) and JSON array format
+/// (older versions that emit `[{...}, {...}]`).
+pub fn parse_docker_ps_json(stdout: &str) -> Vec<serde_json::Value> {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    // Older Docker Compose versions emit a JSON array
+    if trimmed.starts_with('[') {
+        if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(trimmed) {
+            return arr;
+        }
+    }
+
+    // Modern NDJSON: one JSON object per line
+    let mut results = Vec::new();
+    for line in trimmed.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
+            results.push(val);
+        }
+    }
+    results
+}
+
 pub const PROVIDER_ENV_KEYS: &[(&str, &str)] = &[
     ("X_API_KEY", "x"),
     ("FACEBOOK_APP_ID", "facebook"),

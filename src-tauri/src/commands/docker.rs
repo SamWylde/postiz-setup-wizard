@@ -6,7 +6,7 @@ use std::process::Stdio;
 use std::time::Instant;
 use tauri::{Emitter, State};
 
-use super::{sanitize_log_line, silent_cmd};
+use super::{parse_docker_ps_json, sanitize_log_line, silent_cmd};
 use crate::state::SharedState;
 
 #[derive(Clone, Serialize)]
@@ -270,8 +270,12 @@ pub async fn start_stack(
             &install_path,
             &state,
         )
-        .map_err(|_| {
-            "Could not start Docker services. Make sure Docker Desktop is running.".to_string()
+        .map_err(|e| {
+            if e.contains("cancelled") {
+                e
+            } else {
+                "Could not start Docker services. Make sure Docker Desktop is running.".to_string()
+            }
         })?;
 
         if output.status.success() {
@@ -325,27 +329,15 @@ pub async fn get_stack_status(
         .map_err(|e| format!("Failed to get container status: {}", e))?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut containers = Vec::new();
-
-    for line in stdout.lines() {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-            let name = val["Name"].as_str().unwrap_or("unknown").to_string();
-            let container_state = val["State"].as_str().unwrap_or("unknown").to_string();
-            let status = val["Status"].as_str().unwrap_or("unknown").to_string();
-            let health = val["Health"].as_str().unwrap_or("").to_string();
-
-            containers.push(ContainerInfo {
-                name,
-                state: container_state,
-                status,
-                health,
-            });
-        }
-    }
+    let containers: Vec<ContainerInfo> = parse_docker_ps_json(&stdout)
+        .into_iter()
+        .map(|val| ContainerInfo {
+            name: val["Name"].as_str().unwrap_or("unknown").to_string(),
+            state: val["State"].as_str().unwrap_or("unknown").to_string(),
+            status: val["Status"].as_str().unwrap_or("unknown").to_string(),
+            health: val["Health"].as_str().unwrap_or("").to_string(),
+        })
+        .collect();
 
     let all_healthy = !containers.is_empty()
         && containers.iter().all(|c| {
@@ -530,20 +522,11 @@ pub async fn restart_and_verify(
 
         let all_healthy = if let Ok(ps_out) = ps_output {
             let stdout = String::from_utf8_lossy(&ps_out.stdout);
-            let mut containers = Vec::new();
-            for line in stdout.lines() {
-                let line = line.trim();
-                if line.is_empty() {
-                    continue;
-                }
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                    let container_state = val["State"].as_str().unwrap_or("unknown");
-                    let health = val["Health"].as_str().unwrap_or("");
-                    containers.push((container_state.to_string(), health.to_string()));
-                }
-            }
-            !containers.is_empty()
-                && containers.iter().all(|(s, h)| {
+            let entries = parse_docker_ps_json(&stdout);
+            !entries.is_empty()
+                && entries.iter().all(|val| {
+                    let s = val["State"].as_str().unwrap_or("unknown");
+                    let h = val["Health"].as_str().unwrap_or("");
                     s == "running" && (h.is_empty() || h == "healthy")
                 })
         } else {

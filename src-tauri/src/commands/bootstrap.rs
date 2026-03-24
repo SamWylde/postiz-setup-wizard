@@ -23,7 +23,11 @@ pub struct MachineState {
 }
 
 fn check_command(cmd: &str, args: &[&str]) -> bool {
-    silent_cmd(cmd).args(args).output().is_ok()
+    silent_cmd(cmd)
+        .args(args)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// Resolve a binary by checking PostizWizard local install first, then system PATH.
@@ -42,7 +46,11 @@ pub fn resolve_binary(name: &str) -> String {
 
 fn check_binary_available(name: &str, args: &[&str]) -> bool {
     let binary = resolve_binary(name);
-    silent_cmd(&binary).args(args).output().is_ok()
+    silent_cmd(&binary)
+        .args(args)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 fn get_command_output(cmd: &str, args: &[&str]) -> Option<String> {

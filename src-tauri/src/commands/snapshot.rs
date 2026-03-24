@@ -2,7 +2,7 @@ use std::net::TcpListener;
 use std::path::PathBuf;
 use tauri::State;
 
-use super::silent_cmd;
+use super::{parse_docker_ps_json, silent_cmd};
 use crate::state::{InstallSnapshot, PreflightCheck, PreflightResult, SharedState};
 
 #[tauri::command]
@@ -151,25 +151,13 @@ pub async fn get_install_snapshot(
 
             if let Ok(output) = output {
                 let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    let line = line.trim();
-                    if line.is_empty() {
-                        continue;
-                    }
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line) {
-                        let name = val["Name"].as_str().unwrap_or("unknown").to_string();
-                        let container_state =
-                            val["State"].as_str().unwrap_or("unknown").to_string();
-                        let status = val["Status"].as_str().unwrap_or("unknown").to_string();
-                        let health = val["Health"].as_str().unwrap_or("").to_string();
-
-                        containers.push(crate::commands::docker::ContainerInfo {
-                            name,
-                            state: container_state,
-                            status,
-                            health,
-                        });
-                    }
+                for val in parse_docker_ps_json(&stdout) {
+                    containers.push(crate::commands::docker::ContainerInfo {
+                        name: val["Name"].as_str().unwrap_or("unknown").to_string(),
+                        state: val["State"].as_str().unwrap_or("unknown").to_string(),
+                        status: val["Status"].as_str().unwrap_or("unknown").to_string(),
+                        health: val["Health"].as_str().unwrap_or("").to_string(),
+                    });
                 }
             }
 
@@ -424,7 +412,7 @@ pub async fn validate_preflight(
             || silent_cmd("ngrok").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
         let zrok_installed = crate::commands::bootstrap::resolve_binary("zrok") != "zrok"
             || silent_cmd("zrok").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
-        let ssh_available = silent_cmd("ssh").arg("-V").output().is_ok();
+        let ssh_available = silent_cmd("ssh").arg("-V").output().map(|o| o.status.success()).unwrap_or(false);
         let any_provider = cf_installed || ngrok_installed || zrok_installed || ssh_available;
         checks.push(PreflightCheck {
             name: "Tunnel provider available".to_string(),

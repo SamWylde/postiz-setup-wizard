@@ -3676,7 +3676,7 @@ dependencies = [
 
 [[package]]
 name = "postiz-setup-wizard"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "age",
  "chrono",

@@ -109,6 +109,7 @@ export interface WizardState {
   /** Silent hydration — sets fields in one call with NO side effects
    *  (no syncing to Rust, no saving resume state). */
   hydrateFromResume: (data: {
+    currentStep?: number;
     installPath?: string;
     port?: number;
     tunnelMode?: WizardState["tunnelMode"];
@@ -215,6 +216,7 @@ export const useWizardStore = create<WizardState>((set) => ({
 
   hydrateFromResume: (data) => {
     const patch: Partial<WizardState> = {};
+    if (data.currentStep !== undefined) patch.currentStep = data.currentStep;
     if (data.installPath !== undefined) patch.installPath = data.installPath;
     if (data.port !== undefined) patch.port = data.port;
     if (data.tunnelMode !== undefined) patch.tunnelMode = data.tunnelMode;

@@ -40,7 +40,7 @@ function App() {
   const currentStep = useWizardStore((s) => s.currentStep);
   const [view, setView] = useState<AppView>("loading");
   const [snapshot, setSnapshot] = useState<InstallSnapshot | null>(null);
-  const { setStep, setProviderStatus, hydrateFromResume } = useWizardStore();
+  const { setProviderStatus, hydrateFromResume } = useWizardStore();
 
   // Snapshot-based routing on startup
   useEffect(() => {
@@ -89,15 +89,12 @@ function App() {
       setSnapshot(snap);
 
       if (!snap.install_exists) {
-        // No install found — fresh setup or stale resume state.
-        // Only resume the step if it's still in the pre-install range (step 0-1).
-        // Beyond that, the install no longer exists so reset to start.
+        // No install found — use hydrateFromResume (not setStep) to avoid
+        // persisting step changes during startup routing.
         if (resume && resume.current_step > 0 && resume.current_step <= 1) {
-          setStep(resume.current_step);
-        } else if (resume && resume.current_step > 1) {
-          // Install was removed or lost — reset to beginning
-          setStep(0);
+          hydrateFromResume({ currentStep: resume.current_step });
         }
+        // If step > 1 but install gone, currentStep stays 0 (default)
         setView("wizard");
         return;
       }
@@ -140,50 +137,39 @@ function App() {
         hydrateFromResume({ tunnelUrl: null, tunnelStatus: "idle" });
       }
 
-      // Route based on snapshot
+      // Route based on snapshot — use hydrateFromResume (not setStep) to
+      // avoid persisting step changes during startup routing.
       if (resume?.transfer_review_pending && snap.all_healthy && snap.postiz_responding) {
-        // Import completed but user hasn't finished tunnel/provider setup
-        setStep(3); // CreateWebLink
+        hydrateFromResume({ currentStep: 3 }); // CreateWebLink
         setView("wizard");
       } else if (snap.all_healthy && snap.postiz_responding) {
-        // If the user stopped mid-wizard (step < 5), resume there instead of
-        // jumping to the dashboard — a healthy stack doesn't mean setup is complete.
-        // Step 1 (install) with a healthy stack means install finished but user
-        // closed before advancing — bump them to step 2 (create account).
         if (resume && resume.current_step >= 1 && resume.current_step < 5) {
-          setStep(Math.max(resume.current_step, 2));
+          hydrateFromResume({ currentStep: Math.max(resume.current_step, 2) });
           setView("wizard");
         } else if (!resume && snap.current_step >= 1 && snap.current_step < 5) {
-          // No resume state but snapshot inferred progress from disk
-          setStep(Math.max(snap.current_step, 2));
+          hydrateFromResume({ currentStep: Math.max(snap.current_step, 2) });
           setView("wizard");
         } else {
-          // Setup was complete (step >= 5) or no resume — go to dashboard
-          setStep(6);
+          hydrateFromResume({ currentStep: 6 });
           setView("dashboard");
         }
       } else if (snap.has_staged_temp) {
-        // Interrupted install — recovery needed to clean up
-        if (resume) setStep(resume.current_step);
+        if (resume) hydrateFromResume({ currentStep: resume.current_step });
         setView("recovery");
       } else if (snap.docker_running && snap.containers.length > 0 && !snap.all_healthy) {
-        // Docker is running and containers exist but are unhealthy — recovery
-        if (resume) setStep(resume.current_step);
+        if (resume) hydrateFromResume({ currentStep: resume.current_step });
         setView("recovery");
       } else if (!snap.docker_running) {
-        // Docker isn't running — send to PrepareComputer (step 0) which
-        // handles Docker prerequisites. Later wizard steps can't start Docker.
-        setStep(0);
+        // Docker isn't running — show PrepareComputer (step 0) which handles
+        // Docker prerequisites. Do NOT persist: resume state keeps real progress.
+        hydrateFromResume({ currentStep: 0 });
         setView("wizard");
       } else if (!snap.postiz_responding && snap.install_exists) {
-        // Docker is running but Postiz isn't responding (hung container,
-        // containers stopped, etc.) — recovery has the restart button.
-        if (resume) setStep(resume.current_step);
+        if (resume) hydrateFromResume({ currentStep: resume.current_step });
         setView("recovery");
       } else {
-        // Install exists, Docker running, no containers — resume wizard.
         if (resume && resume.current_step > 0) {
-          setStep(resume.current_step);
+          hydrateFromResume({ currentStep: resume.current_step });
         }
         setView("wizard");
       }

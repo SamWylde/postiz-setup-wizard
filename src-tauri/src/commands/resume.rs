@@ -106,27 +106,32 @@ pub fn load_resume_state(
 
 #[tauri::command]
 pub fn save_resume_state(state: State<SharedState>) -> Result<String, String> {
-    let app_state = state.lock().unwrap_or_else(|e| e.into_inner());
+    let (resume, install_path) = {
+        let app_state = state.lock().unwrap_or_else(|e| e.into_inner());
 
-    let install_path = app_state
-        .install_path
-        .as_ref()
-        .map(|p| p.to_string_lossy().to_string());
+        let install_path = app_state
+            .install_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string());
 
-    let resume = ResumeState {
-        version: 1,
-        current_step: app_state.current_step,
-        install_path: install_path.clone(),
-        port: app_state.port,
-        tunnel_url: app_state.tunnel_url.clone(),
-        tunnel_mode: app_state.tunnel_mode.clone(),
-        permanent_domain: app_state.permanent_domain.clone(),
-        providers_configured: app_state.providers_configured.iter().cloned().collect(),
-        providers_stale: app_state.stale_providers.iter().cloned().collect(),
+        let resume = ResumeState {
+            version: 1,
+            current_step: app_state.current_step,
+            install_path: install_path.clone(),
+            port: app_state.port,
+            tunnel_url: app_state.tunnel_url.clone(),
+            tunnel_mode: app_state.tunnel_mode.clone(),
+            permanent_domain: app_state.permanent_domain.clone(),
+            providers_configured: app_state.providers_configured.iter().cloned().collect(),
+            providers_stale: app_state.stale_providers.iter().cloned().collect(),
 
-        transfer_review_pending: app_state.transfer_review_pending,
-        tunnel_provider: app_state.tunnel_provider.as_str().to_string(),
-        last_updated: chrono::Utc::now().to_rfc3339(),
+            transfer_review_pending: app_state.transfer_review_pending,
+            tunnel_provider: app_state.tunnel_provider.as_str().to_string(),
+            last_updated: chrono::Utc::now().to_rfc3339(),
+        };
+
+        (resume, install_path)
+        // Lock is dropped here before file I/O
     };
 
     let path = get_resume_path(install_path.as_deref());
