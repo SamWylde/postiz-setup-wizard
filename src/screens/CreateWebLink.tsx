@@ -41,13 +41,6 @@ const REMOTE_FETCH_TIMEOUT_MS = 10_000;
 const DOMAIN_FETCH_TIMEOUT_MS = 10_000;
 const TUNNEL_START_TIMEOUT_MS = 90_000;
 
-const PROVIDER_WARNINGS: Record<TunnelProvider, string> = {
-  cloudflared: "This link changes every time you restart this app.",
-  ngrok: "Free tier has request limits. Upgrade for a stable URL.",
-  zrok: "Free share URLs are ephemeral. Use `zrok reserve` for stable URLs.",
-  pinggy: "Free tier URL changes on restart. Use a token for stability.",
-};
-
 export function CreateWebLink() {
   const {
     port,
@@ -600,16 +593,16 @@ export function CreateWebLink() {
         </Card>
       )}
 
-      {/* Provider-specific temporary mode warning */}
+      {/* Temporary link info */}
       {tunnelMode === "temporary" && isActive && (
-        <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-4 mb-6">
-          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-          <div className="text-sm text-amber-800">
-            <p className="font-medium mb-1">This link is temporary</p>
-            <p>{PROVIDER_WARNINGS[tunnelProvider]}</p>
-            <p className="mt-1">
-              If it changes, you'll need to update the redirect URLs in your
-              social media developer portals.
+        <div className="flex items-start gap-3 rounded-lg bg-blue-50 border border-blue-200 p-4 mb-6">
+          <Globe className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+          <div className="text-sm text-blue-800">
+            <p className="font-medium mb-1">This link works for setup</p>
+            <p>
+              This temporary URL is all you need to connect your social media
+              accounts. Once connected, Postiz uses saved tokens — the link
+              doesn't need to stay active.
             </p>
           </div>
         </div>
