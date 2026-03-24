@@ -222,6 +222,7 @@ pub fn run() {
             commands::docker::repair_stack,
             commands::docker::get_docker_logs,
             commands::docker::cancel_install,
+            commands::docker::cancel_docker_operation,
             commands::docker::restart_and_verify,
             commands::tunnel::start_tunnel,
             commands::tunnel::stop_tunnel,

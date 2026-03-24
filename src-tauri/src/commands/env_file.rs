@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::{Emitter, State};
 
+use super::docker::run_docker_compose;
 use super::silent_cmd;
 use crate::state::SharedState;
 
@@ -145,9 +146,10 @@ pub async fn apply_config_transaction(
     let install_path = PathBuf::from(&path);
     let env_path = install_path.join("postiz.env");
 
-    // Get pending changes from state (clone, don't clear yet)
+    // Get pending changes from state (clone, don't clear yet) and clear cancel flag
     let (pending, port) = {
-        let app_state = state.lock().unwrap_or_else(|e| e.into_inner());
+        let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
+        app_state.docker_op_cancelled = false;
         (app_state.pending_env_changes.clone(), app_state.port)
     };
 
@@ -177,12 +179,13 @@ pub async fn apply_config_transaction(
 
     let _ = app.emit("docker-progress", "Config written. Restarting stack...");
 
-    // Restart stack: docker compose down
-    let output = silent_cmd("docker")
-        .args(["compose", "--env-file", "postiz.env", "down"])
-        .current_dir(&install_path)
-        .output()
-        .map_err(|e| format!("Failed to stop stack: {}", e))?;
+    // Restart stack: docker compose down (cancellable)
+    let output = run_docker_compose(
+        &["compose", "--env-file", "postiz.env", "down"],
+        &install_path,
+        &state,
+    )
+    .map_err(|e| format!("Failed to stop stack: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -192,13 +195,14 @@ pub async fn apply_config_transaction(
         );
     }
 
-    // docker compose up
+    // docker compose up (cancellable)
     let _ = app.emit("docker-progress", "Starting services with new config...");
-    let output = silent_cmd("docker")
-        .args(["compose", "--env-file", "postiz.env", "up", "-d"])
-        .current_dir(&install_path)
-        .output()
-        .map_err(|e| format!("Failed to start stack: {}", e))?;
+    let output = run_docker_compose(
+        &["compose", "--env-file", "postiz.env", "up", "-d"],
+        &install_path,
+        &state,
+    )
+    .map_err(|e| format!("Failed to start stack: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -227,6 +231,15 @@ pub async fn apply_config_transaction(
     // Wait 15 seconds for services to start
     let _ = app.emit("docker-progress", "Waiting 15 seconds for services to start...");
     tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+
+    // Check if cancelled during the wait
+    if state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .docker_op_cancelled
+    {
+        return Err("Operation cancelled.".to_string());
+    }
 
     // Check health
     let _ = app.emit("docker-progress", "Checking service health...");

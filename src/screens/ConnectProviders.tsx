@@ -3,6 +3,7 @@ import { useWizardStore } from "../store/wizardStore";
 import {
   stageProviderConfig,
   applyConfigTransaction,
+  cancelDockerOperation,
   saveResumeState,
 } from "../lib/tauri";
 import {
@@ -241,6 +242,7 @@ export function ConnectProviders() {
   const [showMore, setShowMore] = useState(false);
   // Track which providers have been staged but not yet applied
   const [stagedProviders, setStagedProviders] = useState<Set<string>>(new Set());
+  const applyOpRef = useRef(0);
 
   const baseUrl = tunnelUrl ?? (tunnelMode === "permanent" && permanentDomain ? permanentDomain : "");
 
@@ -258,11 +260,13 @@ export function ConnectProviders() {
   const [applyError, setApplyError] = useState<string | null>(null);
 
   const handleNext = async () => {
+    const opId = ++applyOpRef.current;
     // Apply all staged changes transactionally (backup → write → restart → health check → rollback on failure)
     setApplying(true);
     setApplyError(null);
     try {
       await applyConfigTransaction(installPath);
+      if (applyOpRef.current !== opId) return; // cancelled
       // Only mark providers as configured after successful apply
       for (const id of stagedProviders) {
         setProviderStatus(id, "configured");
@@ -276,6 +280,7 @@ export function ConnectProviders() {
       setApplying(false);
       setStep(5);
     } catch (err) {
+      if (applyOpRef.current !== opId) return; // cancelled
       setApplying(false);
       setApplyError(
         friendlyError(String(err)),
@@ -429,6 +434,21 @@ export function ConnectProviders() {
             handleSaveProvider(activeProviderDef, entries)
           }
         />
+      )}
+
+      {applying && (
+        <div className="mb-4">
+          <Button
+            variant="secondary"
+            onClick={async () => {
+              applyOpRef.current++;
+              try { await cancelDockerOperation(); } catch {}
+              setApplying(false);
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
       )}
 
       {applyError && (

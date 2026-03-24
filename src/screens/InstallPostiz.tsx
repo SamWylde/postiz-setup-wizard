@@ -65,6 +65,7 @@ export function InstallPostiz() {
   const installPhaseRef = useRef<InstallPhase>("idle");
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef = useRef(true);
+  const cancelledRef = useRef(false);
 
   const setInstallPhase = (phase: InstallPhase) => {
     installPhaseRef.current = phase;
@@ -118,6 +119,7 @@ export function InstallPostiz() {
   }, [isInstalling]);
 
   const handleInstall = async () => {
+    cancelledRef.current = false;
     setInstallStatus("preparing");
     setInstallError(null);
     setErrorPhase(null);
@@ -129,6 +131,7 @@ export function InstallPostiz() {
       // existing files at the install path when a .tmp staging folder proves
       // this wizard created the partial state (i.e. a failed install retry).
       const preflight = await validatePreflight(installPath, port, tunnelMode, false);
+      if (cancelledRef.current) return;
       if (!preflight.ok) {
         const failedChecks = preflight.checks.filter((c) => !c.passed);
         const hasExistingInstall = failedChecks.some((c) =>
@@ -154,6 +157,7 @@ export function InstallPostiz() {
         installPath,
         port !== 4007 ? port : undefined,
       );
+      if (cancelledRef.current) return;
       if (actualPort !== port) {
         setPort(actualPort);
       }
@@ -168,17 +172,20 @@ export function InstallPostiz() {
       setInstallPhase("pulling");
 
       await startStack(installPath);
+      if (cancelledRef.current) return;
 
       setInstallStatus("starting");
       setInstallPhase("starting-services");
 
       // Brief pause to let containers initialize before polling health
       await new Promise((r) => setTimeout(r, PRE_HEALTH_WAIT_MS));
+      if (cancelledRef.current) return;
       setInstallPhase("health-checks");
 
       let attempts = 0;
-      while (mountedRef.current && attempts < MAX_HEALTH_ATTEMPTS) {
+      while (mountedRef.current && !cancelledRef.current && attempts < MAX_HEALTH_ATTEMPTS) {
         await new Promise((r) => setTimeout(r, HEALTH_POLL_INTERVAL_MS));
+        if (cancelledRef.current) return;
         try {
           const status = await getStackStatus(installPath);
           if (status.all_healthy && status.postiz_responding) {
@@ -194,12 +201,14 @@ export function InstallPostiz() {
         attempts++;
       }
 
+      if (cancelledRef.current) return;
       setInstallStatus("error");
       setInstallError(
         "Services started but Postiz didn't become healthy within 3 minutes. Check Docker Desktop for container issues, then try again.",
       );
       setErrorPhase("health-checks");
     } catch (err) {
+      if (cancelledRef.current) return;
       setInstallStatus("error");
       setInstallError(friendlyError(String(err)));
       setErrorPhase(installPhaseRef.current);
@@ -207,6 +216,7 @@ export function InstallPostiz() {
   };
 
   const handleCancel = async () => {
+    cancelledRef.current = true;
     try {
       await cancelInstall();
     } catch {
@@ -374,7 +384,7 @@ export function InstallPostiz() {
             />
 
             <div className="flex gap-2">
-              {installStatus === "pulling" && (
+              {(installStatus === "pulling" || installStatus === "starting") && (
                 <Button variant="secondary" onClick={handleCancel}>
                   Cancel
                 </Button>

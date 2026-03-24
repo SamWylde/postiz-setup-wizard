@@ -32,6 +32,53 @@ pub struct StackStatus {
     pub postiz_responding: bool,
 }
 
+/// Run a docker compose command with PID tracking so it can be cancelled via
+/// `cancel_docker_operation`. Replaces bare `.output()` calls that block
+/// indefinitely with no way for the user to abort.
+pub(super) fn run_docker_compose(
+    args: &[&str],
+    install_path: &std::path::Path,
+    state: &SharedState,
+) -> Result<std::process::Output, String> {
+    // Bail out early if a cancel was already requested (catches the window
+    // between sequential docker commands in multi-step operations).
+    if state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .docker_op_cancelled
+    {
+        return Err("Operation cancelled.".to_string());
+    }
+
+    let child = silent_cmd("docker")
+        .args(args)
+        .current_dir(install_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start docker: {}", e))?;
+
+    let pid = child.id();
+    state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .docker_child_pid = Some(pid);
+
+    let result = child.wait_with_output().map_err(|e| {
+        state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .docker_child_pid = None;
+        format!("Docker command failed: {}", e)
+    });
+
+    state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .docker_child_pid = None;
+    result
+}
+
 #[tauri::command]
 pub async fn start_stack(
     path: String,
@@ -39,6 +86,12 @@ pub async fn start_stack(
     state: State<'_, SharedState>,
 ) -> Result<String, String> {
     let install_path = std::path::PathBuf::from(&path);
+
+    // Clear cancel flag at the start of this operation
+    state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .docker_op_cancelled = false;
 
     let _ = app.emit(
         "docker-progress",
@@ -205,14 +258,15 @@ pub async fn start_stack(
 
     let _ = app.emit("docker-progress", "Starting Postiz services...");
 
-    // Start the stack
-    let output = silent_cmd("docker")
-        .args(["compose", "--env-file", "postiz.env", "up", "-d"])
-        .current_dir(&install_path)
-        .output()
-        .map_err(|_| {
-            "Could not start Docker services. Make sure Docker Desktop is running.".to_string()
-        })?;
+    // Start the stack (cancellable via cancel_docker_operation)
+    let output = run_docker_compose(
+        &["compose", "--env-file", "postiz.env", "up", "-d"],
+        &install_path,
+        &state,
+    )
+    .map_err(|_| {
+        "Could not start Docker services. Make sure Docker Desktop is running.".to_string()
+    })?;
 
     if output.status.success() {
         let _ = app.emit(
@@ -382,27 +436,35 @@ pub async fn restart_and_verify(
 ) -> Result<String, String> {
     let install_path = std::path::PathBuf::from(&path);
 
+    // Clear cancel flag at the start of this multi-step operation
+    state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .docker_op_cancelled = false;
+
     let _ = app.emit("docker-progress", "Restarting Postiz...");
 
-    // Run docker compose down
-    let output = silent_cmd("docker")
-        .args(["compose", "--env-file", "postiz.env", "down"])
-        .current_dir(&install_path)
-        .output()
-        .map_err(|e| format!("Failed to stop stack: {}", e))?;
+    // Run docker compose down (cancellable)
+    let output = run_docker_compose(
+        &["compose", "--env-file", "postiz.env", "down"],
+        &install_path,
+        &state,
+    )
+    .map_err(|e| format!("Failed to stop stack: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let _ = app.emit("docker-progress", format!("Warning: docker compose down had issues: {}", stderr));
     }
 
-    // Run docker compose up
+    // Run docker compose up (cancellable — run_docker_compose checks the flag)
     let _ = app.emit("docker-progress", "Starting Postiz services...");
-    let output = silent_cmd("docker")
-        .args(["compose", "--env-file", "postiz.env", "up", "-d"])
-        .current_dir(&install_path)
-        .output()
-        .map_err(|e| format!("Failed to start stack: {}", e))?;
+    let output = run_docker_compose(
+        &["compose", "--env-file", "postiz.env", "up", "-d"],
+        &install_path,
+        &state,
+    )
+    .map_err(|e| format!("Failed to start stack: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -417,6 +479,15 @@ pub async fn restart_and_verify(
     // Poll health (up to 40 attempts, 3 seconds apart)
     let client = reqwest::Client::new();
     for attempt in 1..=40 {
+        // Check cancel flag each iteration so the poll exits promptly
+        if state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .docker_op_cancelled
+        {
+            return Err("Operation cancelled.".to_string());
+        }
+
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
         let _ = app.emit(
@@ -468,4 +539,35 @@ pub async fn restart_and_verify(
     }
 
     Err("Health check timed out after 40 attempts (2 minutes). Services may still be starting.".to_string())
+}
+
+#[tauri::command]
+pub fn cancel_docker_operation(state: State<SharedState>) -> Result<String, String> {
+    let pid = {
+        let s = state.lock().unwrap_or_else(|e| e.into_inner());
+        s.docker_child_pid
+    };
+
+    // Set the cancelled flag so in-flight multi-step operations bail out
+    // between steps (e.g. after `down` finishes but before `up` starts,
+    // or during health-check polling).
+    {
+        let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
+        s.docker_op_cancelled = true;
+    }
+
+    if let Some(pid) = pid {
+        let _ = silent_cmd("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .output();
+
+        state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .docker_child_pid = None;
+
+        Ok("Docker operation cancelled.".to_string())
+    } else {
+        Ok("No active Docker operation to cancel.".to_string())
+    }
 }

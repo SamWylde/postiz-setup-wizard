@@ -135,6 +135,7 @@ pub struct AppState {
     #[allow(dead_code)] // Retained for future use (e.g. exposing logs via command)
     pub docker_logs: Vec<String>,
     pub docker_child_pid: Option<u32>,
+    pub docker_op_cancelled: bool,
     pub tunnel_pid: Option<u32>,
     pub last_error: Option<String>,
     pub has_shown_tray_notification: bool,
@@ -158,6 +159,7 @@ impl Default for AppState {
             reboot_pending: None,
             docker_logs: Vec::new(),
             docker_child_pid: None,
+            docker_op_cancelled: false,
             tunnel_pid: None,
             last_error: None,
             has_shown_tray_notification: false,

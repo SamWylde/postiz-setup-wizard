@@ -79,6 +79,9 @@ export const getDockerLogs = (path: string) =>
 export const restartAndVerify = (path: string) =>
   invoke<string>("restart_and_verify", { path });
 
+export const cancelDockerOperation = () =>
+  invoke<string>("cancel_docker_operation");
+
 // Tunnel commands
 export type TunnelProvider = "cloudflared" | "ngrok" | "zrok" | "pinggy";
 

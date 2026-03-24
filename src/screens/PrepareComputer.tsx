@@ -12,9 +12,11 @@ export function PrepareComputer() {
     useWizardStore();
   const [actionLog, setActionLog] = useState<string[]>([]);
   const [currentAction, setCurrentAction] = useState<string | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   const checkMachine = async () => {
     setBootstrapStatus("checking");
+    setScanError(null);
     try {
       const state = await scanMachine();
       setMachineState(state);
@@ -25,11 +27,14 @@ export function PrepareComputer() {
         state.docker_running &&
         state.docker_linux_mode &&
         state.disk_space_gb >= 3 &&
-        state.ram_available_gb >= 2;
+        state.ram_available_gb >= 2 &&
+        !state.reboot_required;
 
       setBootstrapStatus(allGood ? "ready" : "action-needed");
     } catch (err) {
-      setActionLog((prev) => [...prev, `Error: ${err}`]);
+      setMachineState(null);
+      setScanError(String(err));
+      setActionLog((prev) => [...prev, `Scan failed: ${err}`]);
       setBootstrapStatus("action-needed");
     }
   };
@@ -38,25 +43,42 @@ export function PrepareComputer() {
     checkMachine();
   }, []);
 
-  const runAction = async (action: BootstrapAction, label: string) => {
+  /** Run a bootstrap action. Returns true on success, false on failure. */
+  const runAction = async (action: BootstrapAction, label: string): Promise<boolean> => {
     setCurrentAction(label);
     setActionLog((prev) => [...prev, `${label}...`]);
     try {
       const result = await runBootstrap(action);
       setActionLog((prev) => [...prev, result]);
+      setCurrentAction(null);
+      return true;
     } catch (err) {
       setActionLog((prev) => [...prev, `Error: ${err}`]);
+      setCurrentAction(null);
+      return false;
     }
-    setCurrentAction(null);
   };
 
   const handleBootstrap = async () => {
     if (!machineState) return;
 
-    if (!machineState.wsl2_installed) {
-      await runAction("InstallWsl2", "Installing WSL2");
-      // WSL2 install may require reboot
+    if (machineState.reboot_required) {
       setBootstrapStatus("rebooting");
+      return;
+    }
+
+    if (!machineState.wsl2_installed) {
+      const ok = await runAction("InstallWsl2", "Installing WSL2");
+      if (ok) {
+        // WSL2 install succeeded — reboot may be required, rescan to verify
+        await checkMachine();
+        // If rescan shows reboot_required or WSL still not installed, show reboot screen
+        const latest = useWizardStore.getState().machineState;
+        if (latest && (latest.reboot_required || !latest.wsl2_installed)) {
+          setBootstrapStatus("rebooting");
+        }
+      }
+      // If runAction failed, the error is in actionLog and we stay on action-needed
       return;
     }
 
@@ -170,13 +192,33 @@ export function PrepareComputer() {
                 label="Memory (RAM)"
                 detail={`${machineState.ram_available_gb.toFixed(1)} GB available (need 2 GB)`}
               />
+              {machineState.reboot_required && (
+                <StatusIndicator
+                  status="warning"
+                  label="System restart"
+                  detail="A restart is required to complete setup"
+                />
+              )}
+            </>
+          ) : scanError && bootstrapStatus !== "checking" ? (
+            <>
+              <StatusIndicator
+                status="error"
+                label="System scan failed"
+                detail={scanError}
+              />
+              <div className="mt-3">
+                <Button variant="secondary" onClick={checkMachine}>
+                  Retry scan
+                </Button>
+              </div>
             </>
           ) : (
             <StatusIndicator status="loading" label="Checking system..." />
           )}
         </div>
 
-        {bootstrapStatus === "action-needed" && (
+        {bootstrapStatus === "action-needed" && machineState && (
           <div className="mt-4 pt-4 border-t border-gray-200">
             <Button
               onClick={handleBootstrap}
@@ -189,10 +231,13 @@ export function PrepareComputer() {
 
         {bootstrapStatus === "rebooting" && (
           <div className="mt-4 pt-4 border-t border-gray-200">
-            <p className="text-sm text-amber-700 bg-amber-50 rounded-lg p-3">
-              A restart is required to complete WSL2 installation. Please restart
+            <p className="text-sm text-amber-700 bg-amber-50 rounded-lg p-3 mb-3">
+              A system restart is required to continue setup. Please restart
               your computer, then reopen this app.
             </p>
+            <Button variant="secondary" onClick={checkMachine}>
+              I've restarted — re-check now
+            </Button>
           </div>
         )}
       </Card>

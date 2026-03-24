@@ -5,6 +5,7 @@ import {
   stopTunnel,
   updateBaseUrls,
   restartAndVerify,
+  cancelDockerOperation,
   saveResumeState,
   runBootstrap,
   scanMachine,
@@ -14,6 +15,7 @@ import {
   type BootstrapAction,
 } from "../lib/tauri";
 import { friendlyError } from "../lib/errors";
+import { showToast } from "../components/ui/Toast";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
@@ -74,8 +76,13 @@ export function CreateWebLink() {
   const [providerConfig, setProviderConfig] = useState("");
   const [installing, setInstalling] = useState<string | null>(null);
   const [switchingLocal, setSwitchingLocal] = useState(false);
+  const [scanError, setScanError] = useState<string | null>(null);
   const mountedRef = useRef(true);
   const tunnelStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Operation generation counters — incremented on cancel to invalidate stale completions
+  const tunnelOpRef = useRef(0);
+  const domainOpRef = useRef(0);
+  const localOpRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -92,7 +99,7 @@ export function CreateWebLink() {
     if (!machineState) {
       scanMachine()
         .then((state) => setMachineState(state))
-        .catch(() => {});
+        .catch((err) => setScanError(String(err)));
     }
   }, []);
 
@@ -137,7 +144,7 @@ export function CreateWebLink() {
       id: "pinggy",
       name: "Pinggy",
       description: "No install needed (uses SSH).",
-      installed: machineState?.ssh_available ?? true,
+      installed: machineState?.ssh_available ?? false,
       installAction: null,
     },
   ];
@@ -149,15 +156,16 @@ export function CreateWebLink() {
     setInstalling(opt.id);
     try {
       await runBootstrap(opt.installAction);
-    } catch {
-      // Error will be visible on re-scan
+    } catch (err) {
+      showToast(friendlyError(String(err)), "error");
     }
     // Re-scan machine state so the freshly installed provider shows as available
     try {
       const state = await scanMachine();
       setMachineState(state);
-    } catch {
-      // Ignore scan errors
+      setScanError(null);
+    } catch (err) {
+      showToast(friendlyError(String(err)), "error");
     }
     setInstalling(null);
   };
@@ -173,6 +181,7 @@ export function CreateWebLink() {
   };
 
   const handleStartTunnel = async () => {
+    const opId = ++tunnelOpRef.current;
     setTunnelMode("temporary");
     setTunnelStatus("starting");
     setStatusMessage("Starting secure tunnel...");
@@ -180,7 +189,7 @@ export function CreateWebLink() {
     // Auto-timeout: if the tunnel hasn't progressed past "starting" in time, error out
     if (tunnelStartTimeoutRef.current) clearTimeout(tunnelStartTimeoutRef.current);
     tunnelStartTimeoutRef.current = setTimeout(() => {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || tunnelOpRef.current !== opId) return;
       const current = useWizardStore.getState().tunnelStatus;
       if (current === "starting") {
         setTunnelStatus("error");
@@ -191,7 +200,7 @@ export function CreateWebLink() {
     try {
       const config = providerConfig.trim() || undefined;
       const url = await startTunnel(port, tunnelProvider, config);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || tunnelOpRef.current !== opId) return;
       // Clear the start timeout — tunnel has progressed past "starting"
       if (tunnelStartTimeoutRef.current) {
         clearTimeout(tunnelStartTimeoutRef.current);
@@ -203,24 +212,24 @@ export function CreateWebLink() {
 
       await updateBaseUrls(installPath, url);
       await restartAndVerify(installPath);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || tunnelOpRef.current !== opId) return;
 
       setStatusMessage("Verifying remote access...");
 
       await new Promise((r) => setTimeout(r, TUNNEL_VERIFY_DELAY_MS));
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || tunnelOpRef.current !== opId) return;
 
       try {
         await fetch(url, {
           mode: "no-cors",
           signal: AbortSignal.timeout(REMOTE_FETCH_TIMEOUT_MS),
         });
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || tunnelOpRef.current !== opId) return;
         setRemoteReachable(true);
         setTunnelStatus("running");
         setStatusMessage("Web link is active!");
       } catch {
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || tunnelOpRef.current !== opId) return;
         setRemoteReachable(false);
         setTunnelStatus("running");
         setStatusMessage(
@@ -232,7 +241,7 @@ export function CreateWebLink() {
         clearTimeout(tunnelStartTimeoutRef.current);
         tunnelStartTimeoutRef.current = null;
       }
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || tunnelOpRef.current !== opId) return;
       setTunnelStatus("error");
       setStatusMessage(friendlyError(String(err)));
     }
@@ -288,12 +297,14 @@ export function CreateWebLink() {
       return;
     }
 
+    const opId = ++domainOpRef.current;
     setApplyingDomain(true);
     setStatusMessage("Applying domain configuration...");
 
     try {
       await updateBaseUrls(installPath, domain);
       await restartAndVerify(installPath);
+      if (domainOpRef.current !== opId) return;
       await saveResumeState();
 
       setTunnelUrl(domain);
@@ -307,9 +318,11 @@ export function CreateWebLink() {
           mode: "no-cors",
           signal: AbortSignal.timeout(DOMAIN_FETCH_TIMEOUT_MS),
         });
+        if (domainOpRef.current !== opId) return;
         reachable = true;
         setStatusMessage("Domain applied and verified!");
       } catch {
+        if (domainOpRef.current !== opId) return;
         setStatusMessage(
           "Domain applied, but could not reach it publicly. Verify DNS and HTTPS are configured correctly — social platform callbacks may not work until this is resolved.",
         );
@@ -317,9 +330,10 @@ export function CreateWebLink() {
       setDomainReachable(reachable);
       setDomainApplied(true);
     } catch (err) {
+      if (domainOpRef.current !== opId) return;
       setStatusMessage(friendlyError(String(err)));
     } finally {
-      setApplyingDomain(false);
+      if (domainOpRef.current === opId) setApplyingDomain(false);
     }
   };
 
@@ -328,6 +342,7 @@ export function CreateWebLink() {
   );
 
   const handleChooseLocalOnly = async () => {
+    const opId = ++localOpRef.current;
     setSwitchingLocal(true);
     setStatusMessage("Switching to local-only mode...");
 
@@ -345,7 +360,7 @@ export function CreateWebLink() {
       // Restart Docker with the new env
       setStatusMessage("Restarting Postiz with local configuration...");
       await restartAndVerify(installPath);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || localOpRef.current !== opId) return;
 
       // Mark configured providers as stale since localhost won't work for OAuth
       if (configuredProviders.length > 0) {
@@ -361,10 +376,10 @@ export function CreateWebLink() {
 
       await saveResumeState();
     } catch (err) {
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || localOpRef.current !== opId) return;
       setStatusMessage(friendlyError(String(err)));
     } finally {
-      if (mountedRef.current) {
+      if (mountedRef.current && localOpRef.current === opId) {
         setSwitchingLocal(false);
       }
     }
@@ -386,6 +401,25 @@ export function CreateWebLink() {
         Social media platforms need a public URL to communicate with Postiz.
         Choose a tunnel provider and we'll create one automatically.
       </p>
+
+      {/* Scan error banner */}
+      {scanError && !machineState && (
+        <div className="rounded-lg bg-red-50 border border-red-200 p-4 mb-4">
+          <p className="text-sm text-red-700 font-medium mb-1">System scan failed</p>
+          <p className="text-sm text-red-600 mb-3">{scanError}</p>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setScanError(null);
+              scanMachine()
+                .then((state) => setMachineState(state))
+                .catch((err) => setScanError(String(err)));
+            }}
+          >
+            Retry scan
+          </Button>
+        </div>
+      )}
 
       {/* Provider selector + primary action */}
       {tunnelStatus === "idle" && tunnelMode !== "permanent" && tunnelMode !== "none" && (
@@ -517,6 +551,22 @@ export function CreateWebLink() {
               </Button>
             )}
 
+            {tunnelStatus === "restarting" && (
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  tunnelOpRef.current++;
+                  try { await cancelDockerOperation(); } catch {}
+                  // Stop the orphaned tunnel process so retries don't stack
+                  try { await stopTunnel(); } catch {}
+                  setTunnelStatus("error");
+                  setStatusMessage("Docker restart cancelled.");
+                }}
+              >
+                Cancel
+              </Button>
+            )}
+
             {tunnelUrl && (
               <CopyField value={tunnelUrl} label="Your web link" />
             )}
@@ -610,7 +660,21 @@ export function CreateWebLink() {
                 {switchingLocal ? "Switching to local..." : "Use locally only"}
               </Button>
               {switchingLocal && (
-                <StatusIndicator status="loading" label={statusMessage} />
+                <>
+                  <StatusIndicator status="loading" label={statusMessage} />
+                  <Button
+                    variant="secondary"
+                    className="mt-2"
+                    onClick={async () => {
+                      localOpRef.current++;
+                      try { await cancelDockerOperation(); } catch {}
+                      setSwitchingLocal(false);
+                      setStatusMessage("Switch cancelled.");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </>
               )}
             </div>
           )}
@@ -683,7 +747,20 @@ export function CreateWebLink() {
                   configured.
                 </p>
                 {applyingDomain && (
-                  <StatusIndicator status="loading" label={statusMessage} />
+                  <>
+                    <StatusIndicator status="loading" label={statusMessage} />
+                    <Button
+                      variant="secondary"
+                      onClick={async () => {
+                        domainOpRef.current++;
+                        try { await cancelDockerOperation(); } catch {}
+                        setApplyingDomain(false);
+                        setStatusMessage("Domain apply cancelled.");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </>
                 )}
                 <div className="flex items-center gap-2">
                   <Button
