@@ -242,6 +242,7 @@ pub fn run() {
             commands::diagnostics::export_diagnostics,
             commands::import::import_existing_install,
             commands::install::clean_staged_files,
+            commands::install::wipe_existing_install,
             commands::secrets::generate_secrets,
             commands::updater::check_for_update,
             commands::updater::install_update,

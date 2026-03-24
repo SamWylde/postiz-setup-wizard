@@ -57,6 +57,9 @@ export const commitInstall = (path: string) =>
 export const cleanStagedFiles = (path: string) =>
   invoke<string>("clean_staged_files", { path });
 
+export const wipeExistingInstall = (path: string) =>
+  invoke<string>("wipe_existing_install", { path });
+
 // Docker commands
 export const startStack = (path: string) =>
   invoke<string>("start_stack", { path });

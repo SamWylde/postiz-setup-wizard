@@ -10,6 +10,8 @@ import {
   cleanStagedFiles,
   validatePreflight,
   saveResumeState,
+  wipeExistingInstall,
+  restartAndVerify,
   onDockerProgress,
   onDockerLog,
   onDockerPullProgress,
@@ -20,12 +22,13 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
-import { FolderOpen } from "lucide-react";
+import { FolderOpen, AlertTriangle, Trash2, Wrench, FolderOpen as FolderIcon } from "lucide-react";
 import { InstallTimeline, type InstallPhase } from "../components/ui/InstallTimeline";
 import { CollapsiblePanel } from "../components/ui/CollapsiblePanel";
 import { LogViewer } from "../components/ui/LogViewer";
 import { NavigationButtons } from "../components/wizard/NavigationButtons";
 import { ImportClonePanel } from "../components/ImportClonePanel";
+import { showToast } from "../components/ui/Toast";
 
 const PRE_HEALTH_WAIT_MS = 5_000;
 const HEALTH_POLL_INTERVAL_MS = 3_000;
@@ -53,6 +56,9 @@ export function InstallPostiz() {
   const [pullProgress, setPullProgress] = useState<PullProgress | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [existingInstallDetected, setExistingInstallDetected] = useState(false);
+  const [wipingInstall, setWipingInstall] = useState(false);
+  const [repairingInstall, setRepairingInstall] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [installPhase, setInstallPhaseState] = useState<InstallPhase>("idle");
   const [errorPhase, setErrorPhase] = useState<InstallPhase | null>(null);
@@ -124,10 +130,17 @@ export function InstallPostiz() {
       // this wizard created the partial state (i.e. a failed install retry).
       const preflight = await validatePreflight(installPath, port, tunnelMode, false);
       if (!preflight.ok) {
-        const failures = preflight.checks
-          .filter((c) => !c.passed)
-          .map((c) => c.message)
-          .join("\n");
+        const failedChecks = preflight.checks.filter((c) => !c.passed);
+        const hasExistingInstall = failedChecks.some((c) =>
+          c.message.includes("existing Postiz install was found"),
+        );
+        if (hasExistingInstall) {
+          setInstallStatus("idle");
+          setInstallPhase("idle");
+          setExistingInstallDetected(true);
+          return;
+        }
+        const failures = failedChecks.map((c) => c.message).join("\n");
         setInstallStatus("error");
         setInstallError(failures);
         setErrorPhase("preflight");
@@ -232,7 +245,44 @@ export function InstallPostiz() {
       </p>
 
       <Card className="mb-6">
-        {installStatus === "idle" ? (
+        {installStatus === "idle" && existingInstallDetected ? (
+          <ExistingInstallPanel
+            installPath={installPath}
+            wipingInstall={wipingInstall}
+            repairingInstall={repairingInstall}
+            onWipe={async () => {
+              setWipingInstall(true);
+              try {
+                await wipeExistingInstall(installPath);
+                showToast("Old install removed. You can now reinstall.", "success");
+                setExistingInstallDetected(false);
+              } catch (err) {
+                showToast(friendlyError(String(err)), "error");
+              } finally {
+                setWipingInstall(false);
+              }
+            }}
+            onRepair={async () => {
+              setRepairingInstall(true);
+              try {
+                await restartAndVerify(installPath);
+                showToast("Repair successful! Services are running.", "success");
+                setPostizReady(true);
+                setInstallStatus("running");
+                setInstallPhase("ready");
+              } catch (err) {
+                showToast(friendlyError(String(err)), "error");
+              } finally {
+                setRepairingInstall(false);
+              }
+            }}
+            onChangePath={() => setExistingInstallDetected(false)}
+            onImport={() => {
+              setExistingInstallDetected(false);
+              setShowImport(true);
+            }}
+          />
+        ) : installStatus === "idle" ? (
           <>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -360,6 +410,133 @@ export function InstallPostiz() {
         loading={isInstalling}
         onNext={() => setStep(2)}
       />
+    </div>
+  );
+}
+
+function ExistingInstallPanel({
+  installPath,
+  wipingInstall,
+  repairingInstall,
+  onWipe,
+  onRepair,
+  onChangePath,
+  onImport,
+}: {
+  installPath: string;
+  wipingInstall: boolean;
+  repairingInstall: boolean;
+  onWipe: () => void;
+  onRepair: () => void;
+  onChangePath: () => void;
+  onImport: () => void;
+}) {
+  const [confirmWipe, setConfirmWipe] = useState(false);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-4">
+        <AlertTriangle className="h-5 w-5 text-amber-500 mt-0.5 shrink-0" />
+        <div>
+          <p className="text-sm font-medium text-amber-800">
+            Existing install found
+          </p>
+          <p className="text-sm text-amber-700 mt-1">
+            A previous Postiz installation was found at{" "}
+            <span className="font-mono text-xs bg-amber-100 px-1 py-0.5 rounded">
+              {installPath}
+            </span>
+            . What would you like to do?
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <button
+          onClick={onRepair}
+          disabled={wipingInstall || repairingInstall}
+          className="w-full flex items-center gap-3 rounded-lg border border-gray-200 p-3 text-left hover:bg-gray-50 transition-colors disabled:opacity-50"
+        >
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 shrink-0">
+            <Wrench className="h-4 w-4 text-blue-600" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-gray-900">
+              {repairingInstall ? "Repairing..." : "Try to repair"}
+            </p>
+            <p className="text-xs text-gray-500">
+              Restart Docker containers and verify the existing install is working.
+            </p>
+          </div>
+        </button>
+
+        {!confirmWipe ? (
+          <button
+            onClick={() => setConfirmWipe(true)}
+            disabled={wipingInstall || repairingInstall}
+            className="w-full flex items-center gap-3 rounded-lg border border-gray-200 p-3 text-left hover:bg-gray-50 transition-colors disabled:opacity-50"
+          >
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-100 shrink-0">
+              <Trash2 className="h-4 w-4 text-red-600" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-gray-900">
+                Delete and reinstall
+              </p>
+              <p className="text-xs text-gray-500">
+                Remove the old install files and Docker volumes, then start fresh.
+              </p>
+            </div>
+          </button>
+        ) : (
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 space-y-2">
+            <p className="text-sm text-red-800 font-medium">
+              Are you sure? This will permanently delete all Postiz data including your database, uploaded files, and configuration.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => setConfirmWipe(false)}
+                disabled={wipingInstall}
+              >
+                Cancel
+              </Button>
+              <button
+                onClick={onWipe}
+                disabled={wipingInstall}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {wipingInstall ? "Deleting..." : "Yes, delete everything"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <button
+          onClick={onImport}
+          disabled={wipingInstall || repairingInstall}
+          className="w-full flex items-center gap-3 rounded-lg border border-gray-200 p-3 text-left hover:bg-gray-50 transition-colors disabled:opacity-50"
+        >
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-100 shrink-0">
+            <FolderIcon className="h-4 w-4 text-green-600" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-gray-900">
+              Import from backup
+            </p>
+            <p className="text-xs text-gray-500">
+              Restore from a clone file created on this or another machine.
+            </p>
+          </div>
+        </button>
+      </div>
+
+      <button
+        onClick={onChangePath}
+        className="text-sm text-blue-600 hover:text-blue-700"
+      >
+        Or choose a different install path
+      </button>
     </div>
   );
 }

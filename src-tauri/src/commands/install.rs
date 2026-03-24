@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 use crate::commands::secrets::generate_random_string;
+use crate::commands::silent_cmd;
 use crate::state::SharedState;
 
 const DOCKER_COMPOSE_TEMPLATE: &str = include_str!("../templates/docker-compose.yml");
@@ -264,5 +265,80 @@ pub fn clean_staged_files(path: String) -> Result<String, String> {
         Ok("Staged files removed.".to_string())
     } else {
         Ok("No staged files found.".to_string())
+    }
+}
+
+/// Stop any running containers and remove all Postiz files from an install directory,
+/// allowing a fresh reinstall at the same path.
+#[tauri::command]
+pub fn wipe_existing_install(path: String, state: State<SharedState>) -> Result<String, String> {
+    let install_path = PathBuf::from(&path);
+
+    if !install_path.exists() {
+        return Ok("Path does not exist — nothing to wipe.".to_string());
+    }
+
+    // Only wipe if it looks like a Postiz install (safety check)
+    let compose = install_path.join("docker-compose.yml");
+    let env = install_path.join("postiz.env");
+    if !compose.exists() && !env.exists() {
+        return Err(
+            "This directory does not appear to be a Postiz install (no docker-compose.yml or postiz.env found)."
+                .to_string(),
+        );
+    }
+
+    // 1. Try to stop containers (best-effort — they might not be running)
+    let _ = silent_cmd("docker")
+        .args(["compose", "--env-file", "postiz.env", "down", "--remove-orphans", "-v"])
+        .current_dir(&install_path)
+        .output();
+
+    // 2. Remove known Postiz files and directories
+    let items_to_remove = [
+        "docker-compose.yml",
+        "postiz.env",
+        "postiz.env.bak",
+        "dynamicconfig",
+        ".tmp",
+    ];
+
+    let mut errors = Vec::new();
+    for item in &items_to_remove {
+        let p = install_path.join(item);
+        if p.is_dir() {
+            if let Err(e) = fs::remove_dir_all(&p) {
+                errors.push(format!("Failed to remove {}: {}", item, e));
+            }
+        } else if p.exists() {
+            if let Err(e) = fs::remove_file(&p) {
+                errors.push(format!("Failed to remove {}: {}", item, e));
+            }
+        }
+    }
+
+    // 3. Clear app state so we don't reference the old install
+    {
+        let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
+        app_state.install_path = None;
+        app_state.port = 4007;
+        app_state.local_url = None;
+    }
+
+    // 4. Remove pointer file so next launch doesn't try to resume
+    if let Some(data_dir) = dirs::data_local_dir() {
+        let pointer = data_dir.join("Postiz").join("install-pointer.json");
+        let _ = fs::remove_file(&pointer);
+        let state_file = data_dir.join("Postiz").join("install-state.json");
+        let _ = fs::remove_file(&state_file);
+    }
+
+    if errors.is_empty() {
+        Ok("Existing install wiped successfully. You can now reinstall.".to_string())
+    } else {
+        Err(format!(
+            "Partially wiped but some files could not be removed:\n{}",
+            errors.join("\n")
+        ))
     }
 }
