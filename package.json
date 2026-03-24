@@ -1,6 +1,6 @@
 {
   "name": "postiz-setup-wizard-1",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "description": "A setup wizard to simplify the deployment and configuration of [Postiz](https://postiz.com) — an open-source social media scheduling tool.",
   "scripts": {
     "dev": "vite",
