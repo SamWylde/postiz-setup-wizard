@@ -149,13 +149,16 @@ fn scan_machine_blocking() -> (MachineState, Option<String>) {
         }
     };
 
-    // Reboot detection: check the Windows PendingFileRenameOperations registry key
-    // which is set after WSL install or other system-level changes.
-    let reboot_required = silent_cmd("reg")
-        .args(["query", r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager", "/v", "PendingFileRenameOperations"])
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    // Reboot detection: only relevant when WSL2 isn't installed yet.
+    // The PendingFileRenameOperations registry key is set by many Windows operations
+    // (updates, driver installs, etc.), not just WSL. Only flag reboot_required when
+    // WSL2 isn't functional — that's the only case where a reboot blocks our workflow.
+    let reboot_required = !wsl2_installed
+        && silent_cmd("reg")
+            .args(["query", r"HKLM\SYSTEM\CurrentControlSet\Control\Session Manager", "/v", "PendingFileRenameOperations"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
 
     let machine = MachineState {
         windows_version_ok,
