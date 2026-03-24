@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   getInstallSnapshot,
   restartAndVerify,
+  cancelDockerOperation,
   reconnectTunnel,
   saveResumeState,
   stopStack,
   cleanStagedFiles,
+  onDockerProgress,
   type InstallSnapshot,
 } from "../lib/tauri";
 import { useWizardStore } from "../store/wizardStore";
@@ -22,6 +24,7 @@ import {
   Trash2,
   RotateCcw,
   AlertTriangle,
+  Loader2,
 } from "lucide-react";
 
 interface RecoveryCenterProps {
@@ -36,6 +39,9 @@ export function RecoveryCenter({
   const { setStep, tunnelProvider } = useWizardStore();
   const [snapshot, setSnapshot] = useState<InstallSnapshot>(initialSnapshot);
   const [repairing, setRepairing] = useState(false);
+  const [repairProgress, setRepairProgress] = useState("");
+  const [repairElapsed, setRepairElapsed] = useState(0);
+  const repairTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [cleaningStaged, setCleaningStaged] = useState(false);
   const [showCleanConfirm, setShowCleanConfirm] = useState(false);
@@ -61,8 +67,23 @@ export function RecoveryCenter({
     onResumeWizard();
   };
 
+  // Listen for docker-progress events during repair
+  useEffect(() => {
+    if (!repairing) return;
+    const unlisten = onDockerProgress((e) => setRepairProgress(e.payload));
+    return () => {
+      unlisten.then((f) => f()).catch(() => {});
+    };
+  }, [repairing]);
+
   const handleRepair = async () => {
     setRepairing(true);
+    setRepairProgress("");
+    setRepairElapsed(0);
+    repairTimerRef.current = setInterval(
+      () => setRepairElapsed((e) => e + 1),
+      1000,
+    );
     try {
       await restartAndVerify(installPath);
       await refreshSnapshot();
@@ -71,7 +92,24 @@ export function RecoveryCenter({
       showToast(`Repair failed: ${String(err)}`, "error");
     } finally {
       setRepairing(false);
+      if (repairTimerRef.current) {
+        clearInterval(repairTimerRef.current);
+        repairTimerRef.current = null;
+      }
     }
+  };
+
+  const handleCancelRepair = async () => {
+    try {
+      await cancelDockerOperation();
+    } catch {
+      // Best effort
+    }
+  };
+
+  const fmtElapsed = (s: number) => {
+    const m = Math.floor(s / 60);
+    return m === 0 ? `${s % 60}s` : `${m}m ${s % 60}s`;
   };
 
   const needsReconnectConfig = tunnelProvider === "ngrok" || tunnelProvider === "pinggy";
@@ -237,26 +275,42 @@ export function RecoveryCenter({
         <Card className="flex flex-col">
           <div className="flex items-start gap-3 mb-4">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-100">
-              <Wrench className="h-5 w-5 text-amber-600" />
+              {repairing ? (
+                <Loader2 className="h-5 w-5 text-amber-600 animate-spin" />
+              ) : (
+                <Wrench className="h-5 w-5 text-amber-600" />
+              )}
             </div>
             <div className="min-w-0">
               <h4 className="text-sm font-semibold text-gray-900">
-                Restart Services
+                {repairing ? "Restarting Services..." : "Restart Services"}
               </h4>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Restart Postiz if it's not responding
-              </p>
+              {repairing ? (
+                <p className="text-xs text-blue-600 mt-0.5">
+                  {fmtElapsed(repairElapsed)}
+                  {repairProgress ? ` — ${repairProgress}` : ""}
+                </p>
+              ) : (
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Restart Postiz if it's not responding
+                </p>
+              )}
             </div>
           </div>
-          <div className="mt-auto">
-            <Button
-              variant="secondary"
-              onClick={handleRepair}
-              loading={repairing}
-              disabled={!installPath}
-            >
-              Restart
-            </Button>
+          <div className="mt-auto flex gap-2">
+            {repairing ? (
+              <Button variant="secondary" onClick={handleCancelRepair}>
+                Cancel
+              </Button>
+            ) : (
+              <Button
+                variant="secondary"
+                onClick={handleRepair}
+                disabled={!installPath}
+              >
+                Restart
+              </Button>
+            )}
           </div>
         </Card>
 

@@ -7,6 +7,7 @@ import {
   startStack,
   getStackStatus,
   cancelInstall,
+  cancelDockerOperation,
   cleanStagedFiles,
   validatePreflight,
   saveResumeState,
@@ -22,7 +23,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
 import { Input } from "../components/ui/Input";
-import { FolderOpen, AlertTriangle, Trash2, Wrench, FolderOpen as FolderIcon } from "lucide-react";
+import { FolderOpen, AlertTriangle, Trash2, Wrench, FolderOpen as FolderIcon, Loader2 } from "lucide-react";
 import { InstallTimeline, type InstallPhase } from "../components/ui/InstallTimeline";
 import { CollapsiblePanel } from "../components/ui/CollapsiblePanel";
 import { LogViewer } from "../components/ui/LogViewer";
@@ -59,6 +60,7 @@ export function InstallPostiz() {
   const [existingInstallDetected, setExistingInstallDetected] = useState(false);
   const [wipingInstall, setWipingInstall] = useState(false);
   const [repairingInstall, setRepairingInstall] = useState(false);
+  const [repairError, setRepairError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [installPhase, setInstallPhaseState] = useState<InstallPhase>("idle");
   const [errorPhase, setErrorPhase] = useState<InstallPhase | null>(null);
@@ -265,6 +267,43 @@ export function InstallPostiz() {
     setPullProgress(null);
   };
 
+  const handleRepairStart = async () => {
+    setRepairingInstall(true);
+    setRepairError(null);
+    setProgressDetail("");
+    setElapsed(0);
+    timerRef.current = setInterval(() => setElapsed((e) => e + 1), ELAPSED_TICK_MS);
+
+    try {
+      await restartAndVerify(installPath);
+      setPostizReady(true);
+      setInstallStatus("running");
+      setInstallPhase("ready");
+    } catch (err) {
+      setRepairError(friendlyError(String(err)));
+    } finally {
+      setRepairingInstall(false);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    }
+  };
+
+  const handleCancelRepair = async () => {
+    try {
+      await cancelDockerOperation();
+    } catch {
+      // Best effort
+    }
+  };
+
+  const fmtElapsed = (seconds: number) => {
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m === 0 ? `${s}s` : `${m}m ${s}s`;
+  };
+
   if (showImport) {
     return (
       <div className="max-w-2xl">
@@ -291,7 +330,48 @@ export function InstallPostiz() {
       </p>
 
       <Card className="mb-6">
-        {installStatus === "idle" && existingInstallDetected ? (
+        {repairingInstall || repairError ? (
+          <div className="space-y-4">
+            {repairingInstall ? (
+              <div className="flex items-start gap-3">
+                <Loader2 className="h-5 w-5 text-blue-500 animate-spin shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-blue-700">
+                    Repairing installation...
+                  </p>
+                  <p className="text-xs text-blue-600 mt-1">
+                    {fmtElapsed(elapsed)}
+                    {progressDetail ? ` — ${progressDetail}` : ""}
+                  </p>
+                </div>
+              </div>
+            ) : repairError ? (
+              <div>
+                <div className="flex items-start gap-3 rounded-lg bg-red-50 border border-red-200 p-4">
+                  <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-red-800">Repair failed</p>
+                    <p className="text-sm text-red-700 mt-1">{repairError}</p>
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <Button variant="secondary" onClick={handleRepairStart}>
+                    Retry
+                  </Button>
+                  <Button variant="ghost" onClick={() => setRepairError(null)}>
+                    Back
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {repairingInstall && (
+              <Button variant="secondary" onClick={handleCancelRepair}>
+                Cancel
+              </Button>
+            )}
+          </div>
+        ) : installStatus === "idle" && existingInstallDetected ? (
           <ExistingInstallPanel
             installPath={installPath}
             wipingInstall={wipingInstall}
@@ -308,20 +388,7 @@ export function InstallPostiz() {
                 setWipingInstall(false);
               }
             }}
-            onRepair={async () => {
-              setRepairingInstall(true);
-              try {
-                await restartAndVerify(installPath);
-                showToast("Repair successful! Services are running.", "success");
-                setPostizReady(true);
-                setInstallStatus("running");
-                setInstallPhase("ready");
-              } catch (err) {
-                showToast(friendlyError(String(err)), "error");
-              } finally {
-                setRepairingInstall(false);
-              }
-            }}
+            onRepair={() => handleRepairStart()}
             onChangePath={() => setExistingInstallDetected(false)}
             onImport={() => {
               setExistingInstallDetected(false);

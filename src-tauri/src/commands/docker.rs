@@ -495,7 +495,11 @@ pub async fn restart_and_verify(
     // Get port from state
     let port = state.lock().unwrap_or_else(|e| e.into_inner()).port;
 
-    // Poll health (up to 40 attempts, 3 seconds apart)
+    // Core containers that must be running — auxiliary (temporal-*) services
+    // can self-heal via restart: always without blocking repair.
+    let core_containers = ["postiz", "postiz-postgres", "postiz-redis"];
+
+    // Poll health (up to 40 attempts, 3 seconds apart = 2 minutes)
     let client = reqwest::Client::new();
     for attempt in 1..=40 {
         // Check cancel flag each iteration so the poll exits promptly
@@ -509,31 +513,43 @@ pub async fn restart_and_verify(
 
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
-        let _ = app.emit(
-            "docker-progress",
-            format!("Health check attempt {}/40...", attempt),
-        );
-
-        // Check container status
+        // Check container status and emit per-container info
         let ps_output = silent_cmd("docker")
             .args(["compose", "ps", "--format", "json"])
             .current_dir(&install_path)
             .output();
 
-        let all_healthy = if let Ok(ps_out) = ps_output {
+        if let Ok(ps_out) = &ps_output {
             let stdout = String::from_utf8_lossy(&ps_out.stdout);
             let entries = parse_docker_ps_json(&stdout);
-            !entries.is_empty()
-                && entries.iter().all(|val| {
-                    let s = val["State"].as_str().unwrap_or("unknown");
-                    let h = val["Health"].as_str().unwrap_or("");
-                    s == "running" && (h.is_empty() || h == "healthy")
-                })
-        } else {
-            false
-        };
+            let running = entries.iter().filter(|v| v["State"].as_str() == Some("running")).count();
+            let total = entries.len();
 
-        // Check if Postiz is responding
+            // Early exit if a core container crashed
+            for entry in &entries {
+                let name = entry["Name"].as_str().unwrap_or("");
+                let st = entry["State"].as_str().unwrap_or("");
+                if core_containers.contains(&name) && (st == "exited" || st == "dead") {
+                    let _ = app.emit("docker-progress", format!("{} crashed", name));
+                    return Err(format!(
+                        "{} crashed. Check Docker Desktop logs, then try again.",
+                        name
+                    ));
+                }
+            }
+
+            let _ = app.emit(
+                "docker-progress",
+                format!("{}/{} containers running (attempt {}/40)", running, total, attempt),
+            );
+        } else {
+            let _ = app.emit(
+                "docker-progress",
+                format!("Health check attempt {}/40...", attempt),
+            );
+        }
+
+        // Primary gate: Postiz responds to HTTP
         let postiz_responding = client
             .get(format!("http://localhost:{}", port))
             .timeout(std::time::Duration::from_secs(5))
@@ -542,13 +558,13 @@ pub async fn restart_and_verify(
             .map(|r| r.status().is_success() || r.status().is_redirection())
             .unwrap_or(false);
 
-        if all_healthy && postiz_responding {
-            let _ = app.emit("docker-progress", "All services healthy and responding!");
+        if postiz_responding {
+            let _ = app.emit("docker-progress", "Postiz is responding!");
             return Ok("Stack restarted and verified successfully.".to_string());
         }
     }
 
-    Err("Health check timed out after 40 attempts (2 minutes). Services may still be starting.".to_string())
+    Err("Postiz didn't respond after 2 minutes. Check Docker Desktop for container issues.".to_string())
 }
 
 #[tauri::command]
