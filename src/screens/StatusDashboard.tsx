@@ -437,7 +437,9 @@ export function StatusDashboard() {
                     ? "success"
                     : snapshot.tunnel_mode === "none"
                       ? "success"
-                      : "error"
+                      : snapshot.providers_configured.length > 0
+                        ? "success"
+                        : "warning"
             }
             label="Web Link"
             detail={
@@ -449,7 +451,9 @@ export function StatusDashboard() {
                     ? `Custom domain: ${snapshot.permanent_domain}`
                     : snapshot.tunnel_mode === "none"
                       ? "Local-only mode"
-                      : "Disconnected"
+                      : snapshot.providers_configured.length > 0
+                        ? "Not needed — accounts use saved tokens"
+                        : "Disconnected — needed to connect accounts"
             }
           />
 

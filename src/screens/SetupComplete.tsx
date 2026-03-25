@@ -150,7 +150,9 @@ export function SetupComplete() {
                     ? "success"
                     : tunnelMode === "permanent" && permanentDomain
                       ? "success"
-                      : "warning"
+                      : configuredProviders.length > 0
+                        ? "success"
+                        : "warning"
                 }
                 label="Web link"
                 detail={
@@ -158,7 +160,9 @@ export function SetupComplete() {
                     ? snapshot.tunnel_url ?? "Active"
                     : tunnelMode === "permanent" && permanentDomain
                       ? `Custom domain: ${permanentDomain}`
-                      : "Not connected"
+                      : configuredProviders.length > 0
+                        ? "Not needed — accounts use saved tokens"
+                        : "Not connected"
                 }
               />
             )}
@@ -259,9 +263,10 @@ export function SetupComplete() {
           </li>
           {tunnelMode === "temporary" && (
             <li>
-              Your web link is temporary but that's fine — it was only needed
-              to connect your social accounts. Postiz uses saved tokens going
-              forward.
+              The web link was only needed to connect your social accounts.
+              Now that they're linked, Postiz uses saved tokens — the tunnel
+              can safely disconnect. You'll only need it again if you add or
+              reconnect an account.
             </li>
           )}
           <li>
