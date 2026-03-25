@@ -3,6 +3,7 @@ import { useWizardStore } from "../store/wizardStore";
 import {
   getInstallSnapshot,
   exportDiagnostics,
+  restartAndVerify,
   clearTransferReviewAndSave,
   type InstallSnapshot,
 } from "../lib/tauri";
@@ -20,6 +21,7 @@ import {
   ArrowRight,
   Download,
   Archive,
+  RefreshCw,
 } from "lucide-react";
 
 export function SetupComplete() {
@@ -28,6 +30,7 @@ export function SetupComplete() {
 
   const [snapshot, setSnapshot] = useState<InstallSnapshot | null>(null);
   const [checking, setChecking] = useState(false);
+  const [restarting, setRestarting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showExport, setShowExport] = useState(false);
 
@@ -60,9 +63,10 @@ export function SetupComplete() {
   };
 
   const handleOpenPostiz = async () => {
-    const url = publicUrl ?? localUrl;
+    // Always open localhost — you're on the same machine. The tunnel URL
+    // is only for social media platform callbacks, not for the user.
     try {
-      await open(url);
+      await open(localUrl);
     } catch (err) {
       showToast(`Could not open URL: ${String(err)}`, "error");
     }
@@ -169,6 +173,39 @@ export function SetupComplete() {
                 }
               />
             </div>
+            {!allGood && (
+              <div className="flex items-center gap-2 pt-3">
+                <Button
+                  variant="secondary"
+                  onClick={async () => {
+                    setRestarting(true);
+                    try {
+                      await restartAndVerify(installPath);
+                      const snap = await getInstallSnapshot();
+                      setSnapshot(snap);
+                      showToast("Services restarted", "success");
+                    } catch (err) {
+                      showToast(`Restart failed: ${String(err)}`, "error");
+                    } finally {
+                      setRestarting(false);
+                    }
+                  }}
+                  loading={restarting}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                  Restart Services
+                </Button>
+                <Button variant="ghost" onClick={handleVerify} loading={checking}>
+                  Re-check
+                </Button>
+                <button
+                  onClick={() => setStep(6)}
+                  className="text-sm text-blue-600 hover:text-blue-700 ml-2"
+                >
+                  View Details
+                </button>
+              </div>
+            )}
           </div>
         )}
       </Card>
@@ -214,9 +251,9 @@ export function SetupComplete() {
           </li>
           {tunnelMode === "temporary" && (
             <li>
-              Your web link is temporary and changes when the app restarts.
-              You'll need to update redirect URLs in developer portals if it
-              changes.
+              Your web link is temporary but that's fine — it was only needed
+              to connect your social accounts. Postiz uses saved tokens going
+              forward.
             </li>
           )}
           <li>

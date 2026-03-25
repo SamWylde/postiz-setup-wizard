@@ -75,9 +75,8 @@ function friendlyServiceName(containerName: string): string {
 
 /** Map Docker state/status to user-friendly text */
 function friendlyContainerStatus(state: string, health: string): string {
-  if (health === "healthy") return "Healthy";
+  if (state === "running" && health === "healthy") return "Healthy";
   if (state === "running" && health === "starting") return "Starting up...";
-  if (state === "running" && health === "unhealthy") return "Running (unhealthy)";
   if (state === "running") return "Running";
   if (state === "exited") return "Stopped";
   if (state === "restarting") return "Restarting...";
@@ -86,7 +85,7 @@ function friendlyContainerStatus(state: string, health: string): string {
 }
 
 export function StatusDashboard() {
-  const { installPath, port, tunnelProvider, permanentDomain, tunnelMode, setStep, setProviderStatus, providers } = useWizardStore();
+  const { installPath, port, tunnelProvider, setStep, setProviderStatus, providers } = useWizardStore();
 
   const [snapshot, setSnapshot] = useState<InstallSnapshot | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -240,10 +239,10 @@ export function StatusDashboard() {
   };
 
   const handleOpenPostiz = async () => {
-    // Prefer live tunnel URL, then permanent domain, then localhost
-    const url = snapshot?.tunnel_url ?? (permanentDomain && tunnelMode === "permanent" ? permanentDomain : localUrl);
+    // Always open localhost — you're on the same machine. The tunnel URL
+    // is only for social media platform callbacks, not for the user.
     try {
-      await open(url);
+      await open(localUrl);
     } catch (err) {
       showToast(`Could not open URL: ${String(err)}`, "error");
     }
@@ -386,9 +385,9 @@ export function StatusDashboard() {
               status={
                 snapshot == null
                   ? "loading"
-                  : c.health === "healthy"
+                  : c.state === "running"
                     ? "success"
-                    : c.state === "running"
+                    : c.state === "restarting"
                       ? "warning"
                       : "error"
               }

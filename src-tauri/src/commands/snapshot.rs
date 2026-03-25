@@ -161,10 +161,12 @@ pub async fn get_install_snapshot(
                 }
             }
 
+            // A container is "good" if it's running — Docker HEALTHCHECK is
+            // unreliable (many containers don't have one, and even when they
+            // do it can disagree with our own HTTP check).  We have a separate
+            // postiz_responding check for the real health status.
             all_healthy = !containers.is_empty()
-                && containers.iter().all(|c| {
-                    c.state == "running" && (c.health.is_empty() || c.health == "healthy")
-                });
+                && containers.iter().all(|c| c.state == "running");
         }
     }
 
