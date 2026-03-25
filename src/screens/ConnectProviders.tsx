@@ -3,6 +3,7 @@ import { useWizardStore } from "../store/wizardStore";
 import {
   stageProviderConfig,
   applyConfigTransaction,
+  updateBaseUrls,
   cancelDockerOperation,
   saveResumeState,
   readEnvValue,
@@ -308,6 +309,10 @@ export function ConnectProviders() {
     setApplying(true);
     setApplyError(null);
     try {
+      // Re-apply tunnel URLs before restarting so Docker picks them up
+      if (baseUrl && tunnelMode !== "none") {
+        await updateBaseUrls(installPath, baseUrl);
+      }
       await applyConfigTransaction(installPath);
       if (applyOpRef.current !== opId) return; // cancelled
       // Only mark providers as configured after successful apply
