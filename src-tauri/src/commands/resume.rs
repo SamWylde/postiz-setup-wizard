@@ -100,6 +100,7 @@ pub fn load_resume_state(
         app_state.tunnel_config = resume.tunnel_config.clone();
         app_state.permanent_domain = resume.permanent_domain.clone();
         app_state.transfer_review_pending = resume.transfer_review_pending;
+        app_state.provider_credentials = resume.provider_credentials.clone();
     }
 
     Ok(Some(resume))
@@ -129,6 +130,7 @@ pub fn save_resume_state(state: State<SharedState>) -> Result<String, String> {
             transfer_review_pending: app_state.transfer_review_pending,
             tunnel_provider: app_state.tunnel_provider.as_str().to_string(),
             tunnel_config: app_state.tunnel_config.clone(),
+            provider_credentials: app_state.provider_credentials.clone(),
             last_updated: chrono::Utc::now().to_rfc3339(),
         };
 
@@ -229,6 +231,7 @@ pub fn clear_transfer_review_and_save(state: State<SharedState>) -> Result<(), S
         transfer_review_pending: false,
         tunnel_provider: app_state.tunnel_provider.as_str().to_string(),
         tunnel_config: app_state.tunnel_config.clone(),
+        provider_credentials: app_state.provider_credentials.clone(),
         last_updated: chrono::Utc::now().to_rfc3339(),
     };
 

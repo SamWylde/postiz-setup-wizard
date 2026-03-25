@@ -7,6 +7,7 @@ import {
   restartAndVerify,
   cancelDockerOperation,
   saveResumeState,
+  syncTunnelConfig,
   runBootstrap,
   scanMachine,
   onTunnelUrl,
@@ -177,6 +178,11 @@ export function CreateWebLink() {
 
   const handleStartTunnel = async () => {
     const opId = ++tunnelOpRef.current;
+
+    // Ensure tunnel settings (including token) are persisted before starting
+    await syncTunnelConfig("temporary", permanentDomain || null, tunnelProvider, tunnelConfig || null);
+    await saveResumeState();
+
     setTunnelMode("temporary");
     setTunnelStatus("starting");
     setStatusMessage("Starting secure tunnel...");
@@ -431,7 +437,7 @@ export function CreateWebLink() {
                 <button
                   key={opt.id}
                   onClick={() => {
-                    if (opt.installed) {
+                    if (opt.installed && opt.id !== tunnelProvider) {
                       setTunnelProvider(opt.id);
                       setTunnelConfig("");
                     }

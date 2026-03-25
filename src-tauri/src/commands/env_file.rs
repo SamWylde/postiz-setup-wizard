@@ -79,11 +79,28 @@ pub fn stage_provider_config(
 
     // Stage the changes (don't write to disk yet)
     // Provider is NOT marked as configured until apply succeeds.
-    for (key, value) in entries {
-        app_state.pending_env_changes.insert(key, value);
+    for (key, value) in &entries {
+        app_state.pending_env_changes.insert(key.clone(), value.clone());
     }
 
+    // Also save credentials to provider_credentials for local persistence
+    // (survives restarts via install-state.json, independent of postiz.env)
+    app_state.provider_credentials.insert(provider.clone(), entries);
+
     Ok(format!("Provider {} config staged.", provider))
+}
+
+#[tauri::command]
+pub fn get_saved_credentials(
+    provider: String,
+    state: State<SharedState>,
+) -> Result<HashMap<String, String>, String> {
+    let app_state = state.lock().unwrap_or_else(|e| e.into_inner());
+    Ok(app_state
+        .provider_credentials
+        .get(&provider)
+        .cloned()
+        .unwrap_or_default())
 }
 
 #[tauri::command]

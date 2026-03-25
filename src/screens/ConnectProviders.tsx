@@ -6,6 +6,7 @@ import {
   cancelDockerOperation,
   saveResumeState,
   readEnvValue,
+  getSavedCredentials,
 } from "../lib/tauri";
 import {
   providers,
@@ -62,10 +63,23 @@ function ProviderModal({
   const callbackUrl = getCallbackUrl(provider, baseUrl);
   const homepageUrl = getHomepageUrl(provider, baseUrl);
 
-  // Pre-populate credentials from existing env file
+  // Pre-populate credentials: try local install-state.json first, fall back to postiz.env
   useEffect(() => {
-    if (!installPath || provider.envKeys.length === 0) return;
+    if (provider.envKeys.length === 0) return;
     const load = async () => {
+      // 1. Try saved credentials from install-state.json (wizard's own local store)
+      try {
+        const saved = await getSavedCredentials(provider.id);
+        if (saved && Object.keys(saved).length > 0) {
+          setValues(saved);
+          return;
+        }
+      } catch {
+        // install-state.json may not have credentials yet
+      }
+
+      // 2. Fall back to reading from postiz.env
+      if (!installPath) return;
       const loaded: Record<string, string> = {};
       for (const envKey of provider.envKeys) {
         try {
@@ -75,7 +89,9 @@ function ProviderModal({
           // env file may not exist yet
         }
       }
-      setValues(loaded);
+      if (Object.keys(loaded).length > 0) {
+        setValues(loaded);
+      }
     };
     load();
   }, [installPath, provider.id]);

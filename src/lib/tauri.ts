@@ -124,6 +124,9 @@ export const updateBaseUrls = (path: string, baseUrl: string) =>
 export const readEnvValue = (path: string, key: string) =>
   invoke<string | null>("read_env_value", { path, key });
 
+export const getSavedCredentials = (provider: string) =>
+  invoke<Record<string, string>>("get_saved_credentials", { provider });
+
 // Snapshot & diagnostics
 export const getInstallSnapshot = () =>
   invoke<InstallSnapshot>("get_install_snapshot");
