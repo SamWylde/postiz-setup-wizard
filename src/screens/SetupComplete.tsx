@@ -251,6 +251,42 @@ export function SetupComplete() {
         </div>
       </Card>
 
+      {/* Next steps — tell users how to actually connect accounts in Postiz */}
+      {configuredProviders.length > 0 && (
+        <Card className="mb-6 bg-amber-50 border-amber-200">
+          <h3 className="text-sm font-medium text-amber-900 mb-3">
+            Next: Connect your accounts in Postiz
+          </h3>
+          <p className="text-sm text-amber-800 mb-3">
+            The wizard saved your API credentials. Now you need to link your
+            actual social media accounts inside Postiz:
+          </p>
+          <ol className="space-y-2 text-sm text-amber-800 list-decimal list-inside">
+            <li>
+              Click <strong>"Open Postiz"</strong> below and create your account
+              (or log in)
+            </li>
+            <li>
+              Go to <strong>Settings</strong> (gear icon) then look for <strong>Channels</strong> or <strong>Integrations</strong>
+            </li>
+            <li>
+              Click <strong>"Connect"</strong> on each platform you configured
+              ({configuredProviders.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(", ")})
+            </li>
+            <li>
+              Authorize the app when redirected to the social media site
+            </li>
+          </ol>
+          {tunnelMode === "temporary" && (
+            <p className="text-xs text-amber-700 mt-3">
+              Keep the tunnel running while you do this — the social media sites
+              redirect back through it. Once all accounts are linked, the tunnel
+              is no longer needed.
+            </p>
+          )}
+        </Card>
+      )}
+
       {/* Important notes */}
       <Card className="mb-6 bg-blue-50 border-blue-200">
         <h3 className="text-sm font-medium text-blue-900 mb-2">
@@ -263,10 +299,10 @@ export function SetupComplete() {
           </li>
           {tunnelMode === "temporary" && (
             <li>
-              The web link was only needed to connect your social accounts.
-              Now that they're linked, Postiz uses saved tokens — the tunnel
-              can safely disconnect. You'll only need it again if you add or
-              reconnect an account.
+              Once you've linked your accounts in Postiz (see steps above),
+              the tunnel is no longer needed — Postiz uses saved tokens after
+              that. You'll only need the tunnel again to add or reconnect an
+              account.
             </li>
           )}
           <li>
