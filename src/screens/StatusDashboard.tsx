@@ -85,7 +85,7 @@ function friendlyContainerStatus(state: string, health: string): string {
 }
 
 export function StatusDashboard() {
-  const { installPath, port, tunnelProvider, setStep, setProviderStatus, providers } = useWizardStore();
+  const { installPath, port, tunnelProvider, tunnelConfig, setTunnelConfig, setStep, setProviderStatus, providers } = useWizardStore();
 
   const [snapshot, setSnapshot] = useState<InstallSnapshot | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
@@ -96,7 +96,7 @@ export function StatusDashboard() {
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [showExport, setShowExport] = useState(false);
   const [showReconnectDialog, setShowReconnectDialog] = useState(false);
-  const [reconnectConfig, setReconnectConfig] = useState("");
+  const [reconnectConfig, setReconnectConfig] = useState(tunnelConfig || "");
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
@@ -291,6 +291,10 @@ export function StatusDashboard() {
     try {
       const previousUrl = snapshot?.tunnel_url;
       const url = await reconnectTunnel(port, installPath, tunnelProvider, reconnectConfig || undefined);
+      // Persist the token to store/backend so it survives restarts
+      if (reconnectConfig) {
+        setTunnelConfig(reconnectConfig);
+      }
       setReconnectConfig("");
       await fetchSnapshot();
       // If the URL changed, mark all configured providers as stale
@@ -718,6 +722,11 @@ export function StatusDashboard() {
         >
           <Archive className="h-4 w-4" />
           Export Full Backup
+        </Button>
+
+        <Button variant="secondary" onClick={() => setStep(4)}>
+          <Globe className="h-4 w-4" />
+          Manage Platforms
         </Button>
 
         <Button variant="ghost" onClick={handleMinimizeToTray}>

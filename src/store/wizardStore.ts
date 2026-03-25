@@ -67,6 +67,7 @@ export interface WizardState {
   tunnelUrl: string | null;
   tunnelMode: "temporary" | "permanent" | "none";
   tunnelProvider: "cloudflared" | "ngrok" | "zrok" | "pinggy";
+  tunnelConfig: string;
   permanentDomain: string;
   remoteReachable: boolean;
 
@@ -97,6 +98,7 @@ export interface WizardState {
   setTunnelUrl: (url: string | null) => void;
   setTunnelMode: (mode: WizardState["tunnelMode"]) => void;
   setTunnelProvider: (provider: WizardState["tunnelProvider"]) => void;
+  setTunnelConfig: (config: string) => void;
   setPermanentDomain: (domain: string) => void;
   setRemoteReachable: (reachable: boolean) => void;
   setProviderStatus: (provider: string, status: ProviderStatus) => void;
@@ -115,6 +117,7 @@ export interface WizardState {
     tunnelMode?: WizardState["tunnelMode"];
     permanentDomain?: string;
     tunnelProvider?: WizardState["tunnelProvider"];
+    tunnelConfig?: string;
     providers?: Record<string, ProviderStatus>;
     transferReviewPending?: boolean;
     tunnelUrl?: string | null;
@@ -140,6 +143,7 @@ export const useWizardStore = create<WizardState>((set) => ({
   tunnelUrl: null,
   tunnelMode: "temporary",
   tunnelProvider: "cloudflared",
+  tunnelConfig: "",
   permanentDomain: "",
   remoteReachable: false,
 
@@ -170,21 +174,28 @@ export const useWizardStore = create<WizardState>((set) => ({
   setTunnelUrl: (tunnelUrl) => set({ tunnelUrl }),
   setTunnelMode: (tunnelMode) => {
     set((state) => {
-      persist(syncTunnelConfig(tunnelMode, state.permanentDomain || null, state.tunnelProvider)
+      persist(syncTunnelConfig(tunnelMode, state.permanentDomain || null, state.tunnelProvider, state.tunnelConfig || null)
         .then(() => saveResumeState()));
       return { tunnelMode };
     });
   },
   setTunnelProvider: (tunnelProvider) => {
     set((state) => {
-      persist(syncTunnelConfig(state.tunnelMode, state.permanentDomain || null, tunnelProvider)
+      persist(syncTunnelConfig(state.tunnelMode, state.permanentDomain || null, tunnelProvider, state.tunnelConfig || null)
         .then(() => saveResumeState()));
       return { tunnelProvider };
     });
   },
+  setTunnelConfig: (tunnelConfig) => {
+    set((state) => {
+      persist(syncTunnelConfig(state.tunnelMode, state.permanentDomain || null, state.tunnelProvider, tunnelConfig || null)
+        .then(() => saveResumeState()));
+      return { tunnelConfig };
+    });
+  },
   setPermanentDomain: (permanentDomain) => {
     set((state) => {
-      persist(syncTunnelConfig(state.tunnelMode, permanentDomain || null, state.tunnelProvider)
+      persist(syncTunnelConfig(state.tunnelMode, permanentDomain || null, state.tunnelProvider, state.tunnelConfig || null)
         .then(() => saveResumeState()));
       return { permanentDomain };
     });
@@ -222,6 +233,7 @@ export const useWizardStore = create<WizardState>((set) => ({
     if (data.tunnelMode !== undefined) patch.tunnelMode = data.tunnelMode;
     if (data.permanentDomain !== undefined) patch.permanentDomain = data.permanentDomain;
     if (data.tunnelProvider !== undefined) patch.tunnelProvider = data.tunnelProvider;
+    if (data.tunnelConfig !== undefined) patch.tunnelConfig = data.tunnelConfig;
     if (data.providers !== undefined) patch.providers = data.providers;
     if (data.transferReviewPending !== undefined) patch.transferReviewPending = data.transferReviewPending;
     if (data.tunnelUrl !== undefined) patch.tunnelUrl = data.tunnelUrl;

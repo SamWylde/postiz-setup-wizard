@@ -226,16 +226,24 @@ export function SetupComplete() {
             </p>
             <p className="text-sm text-gray-600 font-mono">{installPath}</p>
           </div>
-          {configuredProviders.length > 0 && (
-            <div>
-              <p className="text-sm font-medium text-gray-700 mb-1">
-                Connected platforms
-              </p>
+          <div>
+            <p className="text-sm font-medium text-gray-700 mb-1">
+              Connected platforms
+            </p>
+            {configuredProviders.length > 0 ? (
               <p className="text-sm text-gray-600 capitalize">
                 {configuredProviders.join(", ")}
               </p>
-            </div>
-          )}
+            ) : (
+              <p className="text-sm text-gray-500">None configured yet</p>
+            )}
+            <button
+              onClick={() => setStep(4)}
+              className="mt-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
+            >
+              {configuredProviders.length > 0 ? "Connect more platforms" : "Connect social platforms"}
+            </button>
+          </div>
         </div>
       </Card>
 

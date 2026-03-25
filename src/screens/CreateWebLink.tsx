@@ -53,6 +53,8 @@ export function CreateWebLink() {
     setTunnelMode,
     tunnelProvider,
     setTunnelProvider,
+    tunnelConfig,
+    setTunnelConfig,
     permanentDomain,
     setPermanentDomain,
     setRemoteReachable,
@@ -67,7 +69,6 @@ export function CreateWebLink() {
   const [domainReachable, setDomainReachable] = useState(true);
   const [applyingDomain, setApplyingDomain] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [providerConfig, setProviderConfig] = useState("");
   const [installing, setInstalling] = useState<string | null>(null);
   const [switchingLocal, setSwitchingLocal] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -192,7 +193,7 @@ export function CreateWebLink() {
     }, TUNNEL_START_TIMEOUT_MS);
 
     try {
-      const config = providerConfig.trim() || undefined;
+      const config = tunnelConfig.trim() || undefined;
       const url = await startTunnel(port, tunnelProvider, config);
       if (!mountedRef.current || tunnelOpRef.current !== opId) return;
       // Clear the start timeout — tunnel has progressed past "starting"
@@ -432,7 +433,7 @@ export function CreateWebLink() {
                   onClick={() => {
                     if (opt.installed) {
                       setTunnelProvider(opt.id);
-                      setProviderConfig("");
+                      setTunnelConfig("");
                     }
                   }}
                   disabled={!opt.installed && installing !== null}
@@ -470,8 +471,8 @@ export function CreateWebLink() {
             <Card className="mb-4">
               <Input
                 label="ngrok authtoken (optional)"
-                value={providerConfig}
-                onChange={(e) => setProviderConfig(e.target.value)}
+                value={tunnelConfig}
+                onChange={(e) => setTunnelConfig(e.target.value)}
                 placeholder="Paste your ngrok authtoken for a stable URL"
                 secret
               />
@@ -502,8 +503,8 @@ export function CreateWebLink() {
             <Card className="mb-4">
               <Input
                 label="Pinggy token (optional)"
-                value={providerConfig}
-                onChange={(e) => setProviderConfig(e.target.value)}
+                value={tunnelConfig}
+                onChange={(e) => setTunnelConfig(e.target.value)}
                 placeholder="Paste your Pinggy token for a stable URL"
                 secret
               />

@@ -110,16 +110,22 @@ pub fn apply_provider_changes(path: String, state: State<SharedState>) -> Result
 }
 
 #[tauri::command]
-pub fn update_base_urls(path: String, base_url: String) -> Result<String, String> {
+pub fn update_base_urls(path: String, base_url: String, state: State<SharedState>) -> Result<String, String> {
     let install_path = PathBuf::from(&path);
     let env_path = install_path.join("postiz.env");
+
+    let port = state.lock().unwrap_or_else(|e| e.into_inner()).port;
 
     let mut updates = HashMap::new();
     updates.insert("MAIN_URL".to_string(), base_url.clone());
     updates.insert("FRONTEND_URL".to_string(), base_url.clone());
+    // NEXT_PUBLIC_BACKEND_URL must always be localhost because the user's
+    // browser is on the same machine.  Tunnel URLs (ngrok, cloudflared, etc.)
+    // have interstitial pages or CORS issues that break API calls.
+    // Only MAIN_URL / FRONTEND_URL need the public URL (for OAuth callbacks).
     updates.insert(
         "NEXT_PUBLIC_BACKEND_URL".to_string(),
-        format!("{}/api", base_url),
+        format!("http://localhost:{}/api", port),
     );
 
     write_env_file(&env_path, &updates)?;

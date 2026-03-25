@@ -69,6 +69,7 @@ function App() {
             tunnelProvider: resume.tunnel_provider
               ? parseTunnelProvider(resume.tunnel_provider)
               : undefined,
+            tunnelConfig: resume.tunnel_config || undefined,
             providers,
             transferReviewPending: resume.transfer_review_pending || undefined,
           });
@@ -143,16 +144,14 @@ function App() {
         hydrateFromResume({ currentStep: 3 }); // CreateWebLink
         setView("wizard");
       } else if (snap.all_healthy && snap.postiz_responding) {
-        if (resume && resume.current_step >= 1 && resume.current_step < 5) {
-          hydrateFromResume({ currentStep: Math.max(resume.current_step, 2) });
-          setView("wizard");
-        } else if (!resume && snap.current_step >= 1 && snap.current_step < 5) {
-          hydrateFromResume({ currentStep: Math.max(snap.current_step, 2) });
-          setView("wizard");
-        } else {
-          hydrateFromResume({ currentStep: 6 });
-          setView("dashboard");
-        }
+        // Install is fully working. Honor mid-setup steps (2–4) so users
+        // who paused during account/web-link/provider setup resume where
+        // they left off. Otherwise go to SetupComplete (step 5) at minimum.
+        const targetStep = resume && resume.current_step >= 2 && resume.current_step < 5
+          ? resume.current_step
+          : 5;
+        hydrateFromResume({ currentStep: targetStep });
+        setView("wizard");
       } else if (snap.has_staged_temp) {
         if (resume) hydrateFromResume({ currentStep: resume.current_step });
         setView("recovery");

@@ -97,6 +97,7 @@ pub fn load_resume_state(
         }
         app_state.tunnel_mode = resume.tunnel_mode.clone();
         app_state.tunnel_provider = TunnelProvider::from_str_loose(&resume.tunnel_provider);
+        app_state.tunnel_config = resume.tunnel_config.clone();
         app_state.permanent_domain = resume.permanent_domain.clone();
         app_state.transfer_review_pending = resume.transfer_review_pending;
     }
@@ -127,6 +128,7 @@ pub fn save_resume_state(state: State<SharedState>) -> Result<String, String> {
 
             transfer_review_pending: app_state.transfer_review_pending,
             tunnel_provider: app_state.tunnel_provider.as_str().to_string(),
+            tunnel_config: app_state.tunnel_config.clone(),
             last_updated: chrono::Utc::now().to_rfc3339(),
         };
 
@@ -173,11 +175,13 @@ pub fn sync_tunnel_config(
     tunnel_mode: String,
     permanent_domain: Option<String>,
     tunnel_provider: Option<String>,
+    tunnel_config: Option<String>,
     state: State<SharedState>,
 ) -> Result<(), String> {
     let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
     app_state.tunnel_mode = tunnel_mode;
     app_state.permanent_domain = permanent_domain;
+    app_state.tunnel_config = tunnel_config;
     if let Some(ref provider) = tunnel_provider {
         app_state.tunnel_provider = TunnelProvider::from_str_loose(provider);
     }
@@ -224,6 +228,7 @@ pub fn clear_transfer_review_and_save(state: State<SharedState>) -> Result<(), S
 
         transfer_review_pending: false,
         tunnel_provider: app_state.tunnel_provider.as_str().to_string(),
+        tunnel_config: app_state.tunnel_config.clone(),
         last_updated: chrono::Utc::now().to_rfc3339(),
     };
 

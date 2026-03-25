@@ -108,6 +108,20 @@ pub async fn get_install_snapshot(
             (port, tunnel_mode, permanent_domain, providers_configured, current_step)
         };
 
+    // When discovered from disk (no resume state loaded), sync inferred
+    // values back to AppState so subsequent commands (e.g. update_base_urls)
+    // use the correct port instead of the default.
+    if discovered_from_disk {
+        if let Some(ref p) = install_path {
+            let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
+            s.install_path = Some(p.clone());
+            s.port = port;
+            s.tunnel_mode = tunnel_mode.clone();
+            s.permanent_domain = permanent_domain.clone();
+            s.current_step = current_step;
+        }
+    }
+
     let install_path_str = install_path
         .as_ref()
         .map(|p| p.to_string_lossy().to_string());

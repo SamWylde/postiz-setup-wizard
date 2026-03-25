@@ -5,6 +5,7 @@ import {
   applyConfigTransaction,
   cancelDockerOperation,
   saveResumeState,
+  readEnvValue,
 } from "../lib/tauri";
 import {
   providers,
@@ -43,6 +44,7 @@ function ProviderIcon({ name }: { name: string }) {
 interface ProviderModalProps {
   provider: ProviderDefinition;
   baseUrl: string;
+  installPath: string;
   onClose: () => void;
   onSave: (entries: Record<string, string>) => Promise<void> | void;
 }
@@ -50,6 +52,7 @@ interface ProviderModalProps {
 function ProviderModal({
   provider,
   baseUrl,
+  installPath,
   onClose,
   onSave,
 }: ProviderModalProps) {
@@ -58,6 +61,24 @@ function ProviderModal({
   const modalRef = useRef<HTMLDivElement>(null);
   const callbackUrl = getCallbackUrl(provider, baseUrl);
   const homepageUrl = getHomepageUrl(provider, baseUrl);
+
+  // Pre-populate credentials from existing env file
+  useEffect(() => {
+    if (!installPath || provider.envKeys.length === 0) return;
+    const load = async () => {
+      const loaded: Record<string, string> = {};
+      for (const envKey of provider.envKeys) {
+        try {
+          const val = await readEnvValue(installPath, envKey.key);
+          if (val) loaded[envKey.key] = val;
+        } catch {
+          // env file may not exist yet
+        }
+      }
+      setValues(loaded);
+    };
+    load();
+  }, [installPath, provider.id]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -435,6 +456,7 @@ export function ConnectProviders() {
         <ProviderModal
           provider={activeProviderDef}
           baseUrl={baseUrl}
+          installPath={installPath}
           onClose={() => setActiveProvider(null)}
           onSave={(entries) =>
             handleSaveProvider(activeProviderDef, entries)

@@ -155,6 +155,7 @@ export const loadResumeState = (installPath?: string) =>
     providers_stale: string[];
     transfer_review_pending: boolean;
     tunnel_provider: string;
+    tunnel_config: string | null;
   } | null>("load_resume_state", { installPath });
 
 export const saveResumeState = () => invoke<string>("save_resume_state");
@@ -166,7 +167,8 @@ export const syncTunnelConfig = (
   tunnelMode: string,
   permanentDomain: string | null,
   tunnelProvider?: string,
-) => invoke<void>("sync_tunnel_config", { tunnelMode, permanentDomain, tunnelProvider });
+  tunnelConfig?: string | null,
+) => invoke<void>("sync_tunnel_config", { tunnelMode, permanentDomain, tunnelProvider, tunnelConfig });
 
 export const syncProviderStatus = (
   configured: string[],

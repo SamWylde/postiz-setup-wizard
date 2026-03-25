@@ -48,6 +48,8 @@ pub struct ResumeState {
     pub transfer_review_pending: bool,
     #[serde(default)]
     pub tunnel_provider: String,
+    #[serde(default)]
+    pub tunnel_config: Option<String>,
     pub last_updated: String,
 }
 
@@ -65,6 +67,7 @@ impl Default for ResumeState {
             providers_stale: Vec::new(),
             transfer_review_pending: false,
             tunnel_provider: String::new(),
+            tunnel_config: None,
             last_updated: String::new(),
         }
     }
@@ -133,6 +136,7 @@ pub struct AppState {
     pub docker_logs: Vec<String>,
     pub docker_child_pid: Option<u32>,
     pub docker_op_cancelled: bool,
+    pub tunnel_config: Option<String>,
     pub tunnel_pid: Option<u32>,
     pub last_error: Option<String>,
     pub has_shown_tray_notification: bool,
@@ -154,6 +158,7 @@ impl Default for AppState {
             stale_providers: HashSet::new(),
             providers_configured: HashSet::new(),
             docker_logs: Vec::new(),
+            tunnel_config: None,
             docker_child_pid: None,
             docker_op_cancelled: false,
             tunnel_pid: None,
