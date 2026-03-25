@@ -240,6 +240,8 @@ pub fn run() {
             commands::env_file::update_base_urls,
             commands::env_file::read_env_value,
             commands::env_file::get_saved_credentials,
+            commands::env_file::save_postiz_credentials,
+            commands::env_file::get_postiz_credentials,
             commands::env_file::apply_config_transaction,
             commands::resume::load_resume_state,
             commands::resume::save_resume_state,

@@ -104,6 +104,26 @@ pub fn get_saved_credentials(
 }
 
 #[tauri::command]
+pub fn save_postiz_credentials(
+    email: String,
+    password: String,
+    state: State<SharedState>,
+) -> Result<(), String> {
+    let mut app_state = state.lock().unwrap_or_else(|e| e.into_inner());
+    app_state.postiz_email = Some(email);
+    app_state.postiz_password = Some(password);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_postiz_credentials(
+    state: State<SharedState>,
+) -> Result<(Option<String>, Option<String>), String> {
+    let app_state = state.lock().unwrap_or_else(|e| e.into_inner());
+    Ok((app_state.postiz_email.clone(), app_state.postiz_password.clone()))
+}
+
+#[tauri::command]
 pub fn apply_provider_changes(path: String, state: State<SharedState>) -> Result<String, String> {
     let install_path = PathBuf::from(&path);
     let env_path = install_path.join("postiz.env");
@@ -131,18 +151,18 @@ pub fn update_base_urls(path: String, base_url: String, state: State<SharedState
     let install_path = PathBuf::from(&path);
     let env_path = install_path.join("postiz.env");
 
-    let port = state.lock().unwrap_or_else(|e| e.into_inner()).port;
+    let _state = state; // consumed by tauri but not needed here
 
     let mut updates = HashMap::new();
     updates.insert("MAIN_URL".to_string(), base_url.clone());
     updates.insert("FRONTEND_URL".to_string(), base_url.clone());
-    // NEXT_PUBLIC_BACKEND_URL must always be localhost because the user's
-    // browser is on the same machine.  Tunnel URLs (ngrok, cloudflared, etc.)
-    // have interstitial pages or CORS issues that break API calls.
-    // Only MAIN_URL / FRONTEND_URL need the public URL (for OAuth callbacks).
+    // All three URLs must match the domain the user accesses in their browser.
+    // Postiz sets session cookies based on FRONTEND_URL's domain — if the user
+    // accesses via a different hostname the cookies are silently rejected and
+    // login breaks (blank page / login loop).  See gitroomhq/postiz-app#1143.
     updates.insert(
         "NEXT_PUBLIC_BACKEND_URL".to_string(),
-        format!("http://localhost:{}/api", port),
+        format!("{}/api", base_url),
     );
 
     write_env_file(&env_path, &updates)?;

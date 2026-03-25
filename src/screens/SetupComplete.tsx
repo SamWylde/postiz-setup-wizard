@@ -1,10 +1,13 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useWizardStore } from "../store/wizardStore";
 import {
   getInstallSnapshot,
   exportDiagnostics,
   restartAndVerify,
   clearTransferReviewAndSave,
+  savePostizCredentials,
+  getPostizCredentials,
+  saveResumeState,
   type InstallSnapshot,
 } from "../lib/tauri";
 import { open } from "@tauri-apps/plugin-shell";
@@ -33,6 +36,20 @@ export function SetupComplete() {
   const [restarting, setRestarting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [credEmail, setCredEmail] = useState("");
+  const [credPassword, setCredPassword] = useState("");
+  const [credsSaved, setCredsSaved] = useState(false);
+  const credsLoaded = useRef(false);
+
+  // Load saved credentials on mount
+  useEffect(() => {
+    if (credsLoaded.current) return;
+    credsLoaded.current = true;
+    getPostizCredentials().then(([email, password]) => {
+      if (email) { setCredEmail(email); setCredsSaved(true); }
+      if (password) setCredPassword(password);
+    }).catch(() => {});
+  }, []);
 
   // Clear transfer review flag and persist atomically in one backend call
   useEffect(() => {
@@ -63,10 +80,12 @@ export function SetupComplete() {
   };
 
   const handleOpenPostiz = async () => {
-    // Always open localhost — you're on the same machine. The tunnel URL
-    // is only for social media platform callbacks, not for the user.
+    // Open the tunnel URL when active — Postiz sets session cookies based on
+    // FRONTEND_URL's domain, so the browser must access via the same URL.
+    // Falls back to localhost when no tunnel is running.
+    const url = publicUrl ?? localUrl;
     try {
-      await open(localUrl);
+      await open(url);
     } catch (err) {
       showToast(`Could not open URL: ${String(err)}`, "error");
     }
@@ -286,6 +305,58 @@ export function SetupComplete() {
           )}
         </Card>
       )}
+
+      {/* Postiz login credentials — save for easy copy-paste */}
+      <Card className="mb-6">
+        <h3 className="text-sm font-medium text-gray-700 mb-3">
+          Postiz Login Credentials
+        </h3>
+        {credsSaved ? (
+          <div className="space-y-3">
+            <CopyField value={credEmail} label="Email" />
+            <CopyField value={credPassword} label="Password" />
+            <button
+              onClick={() => setCredsSaved(false)}
+              className="text-xs text-blue-600 hover:text-blue-700"
+            >
+              Update credentials
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-gray-600">
+              Save your Postiz login here so you can easily copy it later
+              (e.g. when the URL changes).
+            </p>
+            <input
+              type="email"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="Email"
+              value={credEmail}
+              onChange={(e) => setCredEmail(e.target.value)}
+            />
+            <input
+              type="text"
+              className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+              placeholder="Password"
+              value={credPassword}
+              onChange={(e) => setCredPassword(e.target.value)}
+            />
+            <Button
+              variant="secondary"
+              disabled={!credEmail.trim() || !credPassword.trim()}
+              onClick={async () => {
+                await savePostizCredentials(credEmail.trim(), credPassword.trim());
+                await saveResumeState();
+                setCredsSaved(true);
+                showToast("Credentials saved locally", "success");
+              }}
+            >
+              Save Credentials
+            </Button>
+          </div>
+        )}
+      </Card>
 
       {/* Important notes */}
       <Card className="mb-6 bg-blue-50 border-blue-200">

@@ -239,10 +239,15 @@ export function StatusDashboard() {
   };
 
   const handleOpenPostiz = async () => {
-    // Always open localhost — you're on the same machine. The tunnel URL
-    // is only for social media platform callbacks, not for the user.
+    // Open the tunnel URL when active — Postiz sets session cookies based on
+    // FRONTEND_URL's domain, so the browser must access via the same URL.
+    const url = (snapshot?.tunnel_alive && snapshot?.tunnel_url)
+      ? snapshot.tunnel_url
+      : (snapshot?.tunnel_mode === "permanent" && snapshot?.permanent_domain)
+        ? snapshot.permanent_domain
+        : localUrl;
     try {
-      await open(localUrl);
+      await open(url);
     } catch (err) {
       showToast(`Could not open URL: ${String(err)}`, "error");
     }

@@ -127,6 +127,12 @@ export const readEnvValue = (path: string, key: string) =>
 export const getSavedCredentials = (provider: string) =>
   invoke<Record<string, string>>("get_saved_credentials", { provider });
 
+export const savePostizCredentials = (email: string, password: string) =>
+  invoke<void>("save_postiz_credentials", { email, password });
+
+export const getPostizCredentials = () =>
+  invoke<[string | null, string | null]>("get_postiz_credentials");
+
 // Snapshot & diagnostics
 export const getInstallSnapshot = () =>
   invoke<InstallSnapshot>("get_install_snapshot");
@@ -159,6 +165,8 @@ export const loadResumeState = (installPath?: string) =>
     transfer_review_pending: boolean;
     tunnel_provider: string;
     tunnel_config: string | null;
+    postiz_email: string | null;
+    postiz_password: string | null;
   } | null>("load_resume_state", { installPath });
 
 export const saveResumeState = () => invoke<string>("save_resume_state");

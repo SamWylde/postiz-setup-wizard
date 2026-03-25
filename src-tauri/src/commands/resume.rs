@@ -101,6 +101,8 @@ pub fn load_resume_state(
         app_state.permanent_domain = resume.permanent_domain.clone();
         app_state.transfer_review_pending = resume.transfer_review_pending;
         app_state.provider_credentials = resume.provider_credentials.clone();
+        app_state.postiz_email = resume.postiz_email.clone();
+        app_state.postiz_password = resume.postiz_password.clone();
     }
 
     Ok(Some(resume))
@@ -131,6 +133,8 @@ pub fn save_resume_state(state: State<SharedState>) -> Result<String, String> {
             tunnel_provider: app_state.tunnel_provider.as_str().to_string(),
             tunnel_config: app_state.tunnel_config.clone(),
             provider_credentials: app_state.provider_credentials.clone(),
+            postiz_email: app_state.postiz_email.clone(),
+            postiz_password: app_state.postiz_password.clone(),
             last_updated: chrono::Utc::now().to_rfc3339(),
         };
 
@@ -232,6 +236,8 @@ pub fn clear_transfer_review_and_save(state: State<SharedState>) -> Result<(), S
         tunnel_provider: app_state.tunnel_provider.as_str().to_string(),
         tunnel_config: app_state.tunnel_config.clone(),
         provider_credentials: app_state.provider_credentials.clone(),
+        postiz_email: app_state.postiz_email.clone(),
+        postiz_password: app_state.postiz_password.clone(),
         last_updated: chrono::Utc::now().to_rfc3339(),
     };
 
