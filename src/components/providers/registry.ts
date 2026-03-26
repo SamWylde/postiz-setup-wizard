@@ -46,12 +46,19 @@ export const providers: ProviderDefinition[] = [
       { text: "Enter an app name (e.g. 'Postiz Social') and create the app" },
       { text: "Add 'Login for Business' product to your app" },
       {
+        text: "In App Settings > Basic, add this hostname to App Domains (host only, no http/https, port, or path):",
+        copyLabel: "App Domain",
+      },
+      {
         text: "In Login settings, add this redirect URI:",
         copyLabel: "Redirect URI",
       },
       {
         text: "Go to App Settings > Basic, add your website URL:",
         copyLabel: "Website URL",
+      },
+      {
+        text: "If you are testing locally, keep the app in Development mode and make sure your Facebook account is added under App Roles so you can log in.",
       },
       {
         text: "Go to App Review > Permissions and Features, then request: pages_show_list, business_management, pages_manage_posts, pages_manage_engagement, pages_read_engagement, read_insights",
@@ -85,6 +92,10 @@ export const providers: ProviderDefinition[] = [
     instructions: [
       {
         text: "Use the same Meta app as Facebook (or create a new one)",
+      },
+      {
+        text: "In App Settings > Basic, make sure App Domains includes this hostname (host only, no http/https, port, or path):",
+        copyLabel: "App Domain",
       },
       {
         text: "Add 'Instagram Business Login' product to your app",
@@ -208,6 +219,10 @@ export const providers: ProviderDefinition[] = [
     supportsLocalCallback: true,
     instructions: [
       { text: "Go to Meta for Developers (use same or new app)" },
+      {
+        text: "In App Settings > Basic, make sure App Domains includes this hostname (host only, no http/https, port, or path):",
+        copyLabel: "App Domain",
+      },
       { text: "Add 'Access the Threads API' product" },
       {
         text: "Go to Use Cases > Authenticate and request data from users, then add: threads_content_publish, threads_basic",
@@ -405,4 +420,12 @@ export function getHomepageUrl(
   baseUrl: string,
 ): string {
   return (provider.homepageUrlTemplate ?? "").replace("{baseUrl}", baseUrl);
+}
+
+export function getAppDomain(baseUrl: string): string {
+  try {
+    return new URL(baseUrl).hostname;
+  } catch {
+    return "";
+  }
 }

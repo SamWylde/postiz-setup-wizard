@@ -11,6 +11,7 @@ import {
 } from "../lib/tauri";
 import {
   providers,
+  getAppDomain,
   getCallbackUrl,
   getHomepageUrl,
   type ProviderDefinition,
@@ -63,6 +64,7 @@ function ProviderModal({
   const modalRef = useRef<HTMLDivElement>(null);
   const callbackUrl = getCallbackUrl(provider, baseUrl);
   const homepageUrl = getHomepageUrl(provider, baseUrl);
+  const appDomain = getAppDomain(baseUrl);
 
   // Pre-populate credentials: try local install-state.json first, fall back to postiz.env
   useEffect(() => {
@@ -193,7 +195,13 @@ function ProviderModal({
                   </span>
                   <div className="space-y-2 flex-1">
                     <p className="text-sm text-gray-700">{step.text}</p>
-                    {step.copyLabel && step.copyLabel !== "Website URL" && callbackUrl && (
+                    {step.copyLabel === "App Domain" && appDomain && (
+                      <CopyField
+                        value={appDomain}
+                        label="App Domain"
+                      />
+                    )}
+                    {step.copyLabel && step.copyLabel !== "Website URL" && step.copyLabel !== "App Domain" && callbackUrl && (
                       <CopyField
                         value={callbackUrl}
                         label={step.copyLabel}
