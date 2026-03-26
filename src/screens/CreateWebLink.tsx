@@ -33,6 +33,16 @@ import {
 
 type LinkMethod = "custom-domain" | "cloudflare-zt" | "local-only" | null;
 
+const POSTIZ_CADDY_GUIDE_URL = "https://docs.postiz.com/reverse-proxies/caddy";
+const CADDY_QUICK_START_URL = "https://caddyserver.com/docs/quick-starts/caddyfile";
+const CLOUDFLARE_ADD_SITE_URL =
+  "https://developers.cloudflare.com/learning-paths/clientless-access/initial-setup/add-site/";
+const CLOUDFLARE_REGISTER_DOMAIN_URL =
+  "https://developers.cloudflare.com/registrar/get-started/register-domain/";
+const CLOUDFLARE_TUNNEL_OVERVIEW_URL = "https://developers.cloudflare.com/tunnel/";
+const CLOUDFLARE_PUBLISHED_APPS_URL =
+  "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/routing-to-tunnel/";
+
 export function CreateWebLink() {
   const {
     port,
@@ -356,6 +366,62 @@ export function CreateWebLink() {
         Choose how you'd like to make Postiz accessible.
       </p>
 
+      <Card className="mb-6 bg-slate-50/70">
+        <div className="space-y-3">
+          <div>
+            <h3 className="text-sm font-medium text-gray-900 mb-1">
+              How this step works
+            </h3>
+            <p className="text-sm text-gray-600">
+              Postiz needs one stable public HTTPS address, such as
+              {" "}
+              <code className="bg-white px-1 rounded">https://postiz.example.com</code>,
+              for login callbacks and social platform integrations.
+            </p>
+          </div>
+          <ol className="text-sm text-gray-600 list-decimal list-inside space-y-1">
+            <li>Pick the public hostname you want people and integrations to use.</li>
+            <li>Choose how traffic reaches this computer.</li>
+            <li>This wizard updates Postiz to use that URL everywhere.</li>
+          </ol>
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-lg border border-gray-200 bg-white p-3">
+              <p className="text-xs font-medium text-gray-900 mb-1">
+                Custom Domain
+              </p>
+              <p className="text-xs text-gray-600">
+                You handle DNS and a reverse proxy such as Caddy, Nginx, or
+                Traefik.
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white p-3">
+              <p className="text-xs font-medium text-gray-900 mb-1">
+                Cloudflare Zero Trust
+              </p>
+              <p className="text-xs text-gray-600">
+                Cloudflare hosts the public edge, and `cloudflared` forwards
+                traffic to Postiz without opening router ports.
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white p-3">
+              <p className="text-xs font-medium text-gray-900 mb-1">
+                Local Only
+              </p>
+              <p className="text-xs text-gray-600">
+                Postiz stays on this computer only. Social integrations will not
+                work.
+              </p>
+            </div>
+          </div>
+          <p className="text-xs text-gray-500">
+            This app can update Postiz once your web link exists, but it cannot
+            buy domains, change your router, or edit your DNS provider for you.
+            Those steps happen in your registrar, DNS provider, router, or
+            Cloudflare account.
+          </p>
+        </div>
+      </Card>
+
       {/* Scan error banner */}
       {scanError && !machineState && (
         <div className="rounded-lg bg-red-50 border border-red-200 p-4 mb-4">
@@ -464,8 +530,8 @@ export function CreateWebLink() {
                     </span>
                   </p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Use your own domain with HTTPS. Works with Caddy, Nginx,
-                    Traefik, or any reverse proxy.
+                    Best if you want full control and can manage DNS plus a
+                    reverse proxy such as Caddy, Nginx, or Traefik.
                   </p>
                 </div>
               </div>
@@ -487,8 +553,9 @@ export function CreateWebLink() {
                     Cloudflare Zero Trust
                   </p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    No router changes needed. Requires a Cloudflare account and
-                    domain.
+                    Best if you do not want router changes. Cloudflare handles
+                    the public edge, but you still need a domain or subdomain in
+                    Cloudflare.
                   </p>
                 </div>
               </div>
@@ -510,8 +577,8 @@ export function CreateWebLink() {
                     Local Only
                   </p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Access Postiz on this computer only. No social media
-                    integrations.
+                    Simplest option. Access Postiz on this computer only and
+                    skip social media integrations.
                   </p>
                 </div>
               </div>
@@ -527,6 +594,149 @@ export function CreateWebLink() {
                   <h3 className="text-sm font-medium text-gray-900">
                     Custom Domain Setup
                   </h3>
+                </div>
+
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 space-y-3">
+                  <div>
+                    <p className="text-sm font-medium text-blue-950">
+                      If you already own a domain, do this in order
+                    </p>
+                    <p className="text-xs text-blue-900/80 mt-1">
+                      Most users should use a subdomain like
+                      {" "}
+                      <code className="bg-white px-1 rounded">postiz.yourdomain.com</code>
+                      {" "}
+                      so they do not disturb an existing website or email setup.
+                    </p>
+                  </div>
+                  <ol className="text-sm text-blue-950 list-decimal list-inside space-y-1">
+                    <li>Choose an unused subdomain such as `postiz.yourdomain.com`.</li>
+                    <li>Create a DNS record for that subdomain pointing to your public IP.</li>
+                    <li>Forward ports `80` and `443` to the computer running Postiz.</li>
+                    <li>Run Caddy or another reverse proxy that sends that hostname to `http://localhost:{port}`.</li>
+                    <li>Open `https://postiz.yourdomain.com` in a browser and make sure it loads.</li>
+                    <li>Paste that exact URL below, then click `Verify & Apply`.</li>
+                  </ol>
+                </div>
+
+                <div className="bg-blue-50 rounded-lg border border-blue-200 p-3 space-y-2">
+                  <p className="text-xs font-medium text-blue-900">
+                    What this option means
+                  </p>
+                  <p className="text-xs text-blue-900/90">
+                    People visit your public hostname, DNS sends that hostname to
+                    your network, and a reverse proxy on your machine or server
+                    forwards the request to Postiz at
+                    {" "}
+                    <code className="bg-white px-1 rounded">http://localhost:{port}</code>.
+                  </p>
+                  <p className="text-xs text-blue-900/80">
+                    HTTPS is required here because social platforms send login
+                    callbacks back to this exact URL.
+                  </p>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <p className="text-xs font-medium text-gray-900 mb-1">
+                      What is DNS?
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      DNS is the part that points a name like
+                      {" "}
+                      <code className="bg-white px-1 rounded">postiz.example.com</code>
+                      {" "}
+                      to your public IP address.
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <p className="text-xs font-medium text-gray-900 mb-1">
+                      What is a reverse proxy?
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      It is the web server that accepts HTTPS from the internet
+                      and forwards requests to Postiz running locally on port
+                      {" "}
+                      <code className="bg-white px-1 rounded">{port}</code>.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-700 font-medium mb-2">
+                    Before you click Verify and Apply
+                  </p>
+                  <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                    <li>Own or control the domain or subdomain you want to use.</li>
+                    <li>Point that hostname at your public IP with DNS.</li>
+                    <li>
+                      Make sure ports 80 and 443 reach the machine running your
+                      reverse proxy, either directly or through your router and
+                      firewall.
+                    </li>
+                    <li>
+                      Configure your reverse proxy to forward that hostname to
+                      {" "}
+                      <code className="bg-white px-1 rounded">http://localhost:{port}</code>.
+                    </li>
+                  </ol>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
+                  <p className="text-xs font-medium text-gray-900">
+                    If you already own a domain
+                  </p>
+                  <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                    <li>
+                      Pick an unused subdomain such as
+                      {" "}
+                      <code className="bg-gray-100 px-1 rounded">postiz.yourdomain.com</code>
+                      {" "}
+                      instead of replacing your main domain.
+                    </li>
+                    <li>
+                      In your DNS provider, create an
+                      {" "}
+                      <code className="bg-gray-100 px-1 rounded">A</code>
+                      {" "}
+                      record for that subdomain pointing to your public IPv4
+                      address. Add an
+                      {" "}
+                      <code className="bg-gray-100 px-1 rounded">AAAA</code>
+                      {" "}
+                      record too if you use IPv6.
+                    </li>
+                    <li>
+                      If your home IP changes often, use your router&apos;s
+                      dynamic DNS support or choose the Cloudflare option
+                      instead.
+                    </li>
+                    <li>
+                      Forward ports 80 and 443 from your router to the machine
+                      running Caddy or your existing reverse proxy.
+                    </li>
+                    <li>
+                      Configure that proxy to serve
+                      {" "}
+                      <code className="bg-gray-100 px-1 rounded">postiz.yourdomain.com</code>
+                      {" "}
+                      over HTTPS and forward to
+                      {" "}
+                      <code className="bg-gray-100 px-1 rounded">http://localhost:{port}</code>.
+                    </li>
+                    <li>
+                      Open
+                      {" "}
+                      <code className="bg-gray-100 px-1 rounded">https://postiz.yourdomain.com</code>
+                      {" "}
+                      from a device outside your home network if possible, then
+                      paste that exact URL below.
+                    </li>
+                  </ol>
+                  <p className="text-xs text-gray-500">
+                    Using a subdomain is usually safest because it leaves your
+                    existing website, email, and other DNS records alone.
+                  </p>
                 </div>
 
                 {/* Caddy / other proxy toggle */}
@@ -546,7 +756,41 @@ export function CreateWebLink() {
                 </div>
 
                 {showCaddy && (
-                  <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                  <div className="bg-gray-50 rounded-lg p-3 space-y-3">
+                    <div>
+                      <p className="text-xs font-medium text-gray-700 mb-1">
+                        What is Caddy?
+                      </p>
+                      <p className="text-xs text-gray-600">
+                        Caddy is a web server and reverse proxy. It can
+                        automatically get and renew HTTPS certificates, which
+                        makes it one of the easiest ways to publish Postiz on
+                        your own domain.
+                      </p>
+                    </div>
+
+                    <div>
+                      <p className="text-xs font-medium text-gray-700 mb-1">
+                        Typical Caddy setup
+                      </p>
+                      <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                        <li>
+                          Create a DNS record for
+                          {" "}
+                          <code className="bg-white px-1 rounded">postiz.example.com</code>
+                          {" "}
+                          that points to your public IP.
+                        </li>
+                        <li>
+                          Forward ports 80 and 443 from your router or firewall
+                          to the machine running Caddy.
+                        </li>
+                        <li>
+                          Save the Caddyfile below and start or reload Caddy.
+                        </li>
+                      </ol>
+                    </div>
+
                     <p className="text-xs text-gray-600">
                       Example Caddyfile for your Postiz install:
                     </p>
@@ -555,16 +799,48 @@ export function CreateWebLink() {
     reverse_proxy localhost:${port}
 }`}
                     </pre>
+
                     <p className="text-xs text-gray-500">
-                      Caddy automatically provisions HTTPS certificates. See{" "}
+                      When someone visits your public hostname, Caddy accepts the
+                      HTTPS request and forwards it to Postiz on
+                      {" "}
+                      <code className="bg-white px-1 rounded">localhost:{port}</code>.
+                    </p>
+
+                    <div className="flex flex-wrap gap-2">
                       <button
-                        onClick={() => open("https://docs.postiz.com/reverse-proxies/caddy")}
-                        className="text-blue-600 hover:text-blue-700 underline"
+                        onClick={() => open(POSTIZ_CADDY_GUIDE_URL)}
+                        className="text-xs text-blue-600 hover:text-blue-700 underline"
                       >
                         Postiz Caddy guide
-                      </button>{" "}
-                      for details.
+                      </button>
+                      <button
+                        onClick={() => open(CADDY_QUICK_START_URL)}
+                        className="text-xs text-blue-600 hover:text-blue-700 underline"
+                      >
+                        Caddy quick start
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {!showCaddy && (
+                  <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                    <p className="text-xs font-medium text-gray-700">
+                      Using Nginx, Traefik, or another reverse proxy
                     </p>
+                    <p className="text-xs text-gray-600">
+                      That is fine. The important part is that your proxy serves
+                      the same public hostname over HTTPS and forwards requests
+                      to
+                      {" "}
+                      <code className="bg-white px-1 rounded">http://localhost:{port}</code>.
+                    </p>
+                    <ul className="text-xs text-gray-600 list-disc list-inside space-y-1">
+                      <li>The public URL must be the hostname users will open.</li>
+                      <li>Your proxy must terminate HTTPS for that hostname.</li>
+                      <li>DNS must already point that hostname to your network.</li>
+                    </ul>
                   </div>
                 )}
 
@@ -589,7 +865,8 @@ export function CreateWebLink() {
                     <div className="text-sm text-amber-800">
                       <p className="mb-2">
                         The URL is not reachable. Make sure your reverse proxy is
-                        running and DNS points to this machine.
+                        running, DNS points to this machine, and ports 80 and 443
+                        are reachable from the internet.
                       </p>
                       <Button
                         variant="secondary"
@@ -652,6 +929,25 @@ NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api`}
                   </h3>
                 </div>
 
+                <div className="bg-orange-50 rounded-lg border border-orange-200 p-3 space-y-2">
+                  <p className="text-xs font-medium text-orange-900">
+                    What this option means
+                  </p>
+                  <p className="text-xs text-orange-900/90">
+                    Cloudflare provides the public HTTPS endpoint, and
+                    {" "}
+                    <code className="bg-white px-1 rounded">cloudflared</code>
+                    {" "}
+                    on this machine creates an outbound tunnel back to Postiz at
+                    {" "}
+                    <code className="bg-white px-1 rounded">http://localhost:{port}</code>.
+                  </p>
+                  <p className="text-xs text-orange-900/80">
+                    That means no inbound router port forwarding, but you still
+                    need a domain or subdomain managed by Cloudflare.
+                  </p>
+                </div>
+
                 {!cloudflaredInstalled && (
                   <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
                     <Download className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
@@ -671,11 +967,89 @@ NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api`}
                 )}
 
                 <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-700 font-medium mb-2">
+                    Before you start
+                  </p>
+                  <p className="text-xs text-gray-600 mb-2">
+                    Cloudflare Tunnel itself can be used on Cloudflare&apos;s Free
+                    plan, but Cloudflare does <strong>not</strong> include a free
+                    registered domain with this setup. You need one of these first:
+                  </p>
+                  <ul className="text-xs text-gray-600 list-disc list-inside space-y-1 mb-3">
+                    <li>A domain you already own, added or transferred to Cloudflare</li>
+                    <li>A new domain you register first, then manage in Cloudflare</li>
+                  </ul>
+                  <p className="text-xs text-gray-500 mb-3">
+                    Once your domain is in Cloudflare, you can create subdomains
+                    like <code className="bg-white px-1 rounded">postiz.yourdomain.com</code> for free.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => open(CLOUDFLARE_ADD_SITE_URL)}
+                      className="text-xs text-blue-600 hover:text-blue-700 underline"
+                    >
+                      Add an existing domain to Cloudflare
+                    </button>
+                    <button
+                      onClick={() => open(CLOUDFLARE_REGISTER_DOMAIN_URL)}
+                      className="text-xs text-blue-600 hover:text-blue-700 underline"
+                    >
+                      Register a new domain in Cloudflare
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
+                  <p className="text-xs font-medium text-gray-900">
+                    If you already own a domain
+                  </p>
+                  <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                    <li>
+                      Choose an unused subdomain such as
+                      {" "}
+                      <code className="bg-gray-100 px-1 rounded">postiz.yourdomain.com</code>.
+                    </li>
+                    <li>
+                      If your domain is already managed in Cloudflare, you can
+                      keep it there and use that subdomain immediately.
+                    </li>
+                    <li>
+                      If your domain is at another registrar or DNS provider,
+                      add the site to Cloudflare or transfer it there first.
+                    </li>
+                    <li>
+                      In the Zero Trust tunnel, create a public hostname for
+                      {" "}
+                      <code className="bg-gray-100 px-1 rounded">postiz.yourdomain.com</code>
+                      {" "}
+                      and point it at
+                      {" "}
+                      <code className="bg-gray-100 px-1 rounded">http://localhost:{port}</code>.
+                    </li>
+                    <li>
+                      Copy the tunnel token from Cloudflare and paste it into
+                      this screen so the local
+                      {" "}
+                      <code className="bg-gray-100 px-1 rounded">cloudflared</code>
+                      {" "}
+                      service can connect.
+                    </li>
+                  </ol>
+                  <p className="text-xs text-gray-500">
+                    You usually do not need to touch your router for this
+                    method, because the tunnel is outbound from your machine to
+                    Cloudflare.
+                  </p>
+                </div>
+
+                <div className="bg-gray-50 rounded-lg p-3">
                   <p className="text-xs text-gray-600 font-medium mb-2">
                     Steps in the Cloudflare dashboard:
                   </p>
                   <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
-                    <li>Put your domain on Cloudflare (if not already)</li>
+                    <li>
+                      Get a domain into Cloudflare first using one of the links above
+                    </li>
                     <li>
                       Go to{" "}
                       <button
@@ -700,6 +1074,43 @@ NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api`}
                     <li>Copy the tunnel token from the install command</li>
                     <li>Paste the URL and token below</li>
                   </ol>
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    <button
+                      onClick={() => open(CLOUDFLARE_TUNNEL_OVERVIEW_URL)}
+                      className="text-xs text-blue-600 hover:text-blue-700 underline"
+                    >
+                      Cloudflare Tunnel overview
+                    </button>
+                    <button
+                      onClick={() => open(CLOUDFLARE_PUBLISHED_APPS_URL)}
+                      className="text-xs text-blue-600 hover:text-blue-700 underline"
+                    >
+                      Published application guide
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <p className="text-xs font-medium text-gray-900 mb-1">
+                      What is cloudflared?
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      It is Cloudflare&apos;s small connector program. It runs on
+                      this machine and keeps the tunnel connected to your
+                      Cloudflare account.
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <p className="text-xs font-medium text-gray-900 mb-1">
+                      What is the tunnel token?
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      It is the secret token Cloudflare shows in the tunnel
+                      install command. This wizard uses that token to connect
+                      `cloudflared` on your machine to the tunnel you created.
+                    </p>
+                  </div>
                 </div>
 
                 <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
