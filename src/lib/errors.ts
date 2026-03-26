@@ -19,6 +19,9 @@ export function friendlyError(raw: string): string {
   if (lower.includes("cloudflared") && lower.includes("not found")) {
     return "cloudflared is not installed. Please install it first from the Prepare Computer step.";
   }
+  if (lower.includes("caddy") && lower.includes("not found")) {
+    return "Caddy is not installed yet. Let the wizard install it for you, then try again.";
+  }
   if (lower.includes("tunnel") && (lower.includes("fail") || lower.includes("error"))) {
     return "Failed to create the web link. Make sure cloudflared is installed and you have internet access.";
   }

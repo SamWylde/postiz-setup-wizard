@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useWizardStore } from "../store/wizardStore";
 import {
   applyManualDomain,
+  configureManagedCaddy,
+  disableManagedCaddy,
   connectCloudflareZeroTrust,
   switchToLocalOnly,
   stopTunnel,
@@ -32,6 +34,7 @@ import {
 } from "lucide-react";
 
 type LinkMethod = "custom-domain" | "cloudflare-zt" | "local-only" | null;
+type StatusTone = "success" | "error" | "warning" | "loading";
 
 const POSTIZ_CADDY_GUIDE_URL = "https://docs.postiz.com/reverse-proxies/caddy";
 const CADDY_QUICK_START_URL = "https://caddyserver.com/docs/quick-starts/caddyfile";
@@ -66,9 +69,11 @@ export function CreateWebLink() {
   } = useWizardStore();
 
   const [statusMessage, setStatusMessage] = useState("");
+  const [statusTone, setStatusTone] = useState<StatusTone>("error");
   const [selectedMethod, setSelectedMethod] = useState<LinkMethod>(null);
   const [applying, setApplying] = useState(false);
   const [installing, setInstalling] = useState(false);
+  const [configuringCaddy, setConfiguringCaddy] = useState(false);
   const [switchingLocal, setSwitchingLocal] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [showCaddy, setShowCaddy] = useState(true);
@@ -107,6 +112,17 @@ export function CreateWebLink() {
   }, [refreshLinkSnapshot, tunnelMode, tunnelProvider]);
 
   const cloudflaredInstalled = machineState?.cloudflared_installed ?? false;
+  const caddyInstalled = machineState?.caddy_installed ?? false;
+
+  const showStatus = (tone: StatusTone, message: string) => {
+    setStatusTone(tone);
+    setStatusMessage(message);
+  };
+
+  const clearStatus = () => {
+    setStatusTone("error");
+    setStatusMessage("");
+  };
 
   const configuredProviders = Object.entries(providers).filter(
     ([, status]) => status === "configured",
@@ -196,23 +212,34 @@ export function CreateWebLink() {
 
     const domain = raw.replace(/\/+$/, "");
     if (!domain.startsWith("https://")) {
-      setStatusMessage("Domain must start with https:// — social platforms require HTTPS.");
+      showStatus("error", "Domain must start with https:// — social platforms require HTTPS.");
       return;
     }
 
     try {
       new URL(domain);
     } catch {
-      setStatusMessage("Invalid URL format. Enter a full URL like https://postiz.example.com");
+      showStatus("error", "Invalid URL format. Enter a full URL like https://postiz.example.com");
       return;
     }
 
     const opId = ++opRef.current;
     setApplying(true);
-    setStatusMessage("Applying domain configuration...");
+    showStatus(
+      "loading",
+      showCaddy
+        ? "Applying domain configuration..."
+        : "Turning off app-managed Caddy and verifying your own proxy...",
+    );
     setUnreachableUrl(null);
 
     try {
+      if (!showCaddy) {
+        await disableManagedCaddy(installPath);
+        if (!mountedRef.current || opRef.current !== opId) return;
+      }
+
+      showStatus("loading", "Applying domain configuration...");
       await applyManualDomain(installPath, domain, force);
       if (!mountedRef.current || opRef.current !== opId) return;
 
@@ -222,7 +249,7 @@ export function CreateWebLink() {
       setTunnelProvider("manual");
       setTunnelConfig("");
       setTunnelStatus("running");
-      setStatusMessage("Domain applied successfully!");
+      showStatus("success", "Domain applied successfully!");
       setEditingActiveLink(false);
       setSelectedMethod(null);
       setUnreachableUrl(null);
@@ -233,11 +260,12 @@ export function CreateWebLink() {
       const errStr = String(err);
       if (errStr.startsWith("UNREACHABLE:")) {
         setUnreachableUrl(domain);
-        setStatusMessage(
+        showStatus(
+          "warning",
           `Could not reach ${domain}. Make sure your reverse proxy is running and DNS is configured.`,
         );
       } else {
-        setStatusMessage(friendlyError(errStr));
+        showStatus("error", friendlyError(errStr));
       }
     } finally {
       if (mountedRef.current && opRef.current === opId) setApplying(false);
@@ -246,28 +274,90 @@ export function CreateWebLink() {
 
   // ── Cloudflare Zero Trust ──────────────────────────────────────────
 
+  const handleSetupManagedCaddy = async () => {
+    const raw = permanentDomain.trim();
+    if (!raw) {
+      showStatus("error", "Enter the public URL you want to use first.");
+      return;
+    }
+
+    const domain = raw.replace(/\/+$/, "");
+    if (!domain.startsWith("https://")) {
+      showStatus("error", "Public URL must start with https://");
+      return;
+    }
+
+    try {
+      const parsed = new URL(domain);
+      if ((parsed.pathname && parsed.pathname !== "/") || parsed.search || parsed.hash) {
+        showStatus("error", "Use just the site URL, like https://postiz.example.com, with no extra path.");
+        return;
+      }
+    } catch {
+      showStatus("error", "Invalid URL format. Enter a full URL like https://postiz.example.com");
+      return;
+    }
+
+    const opId = ++opRef.current;
+    setConfiguringCaddy(true);
+    setUnreachableUrl(null);
+    showStatus(
+      "loading",
+      caddyInstalled
+        ? "Configuring Caddy on this computer..."
+        : "Installing Caddy and configuring it for Postiz...",
+    );
+
+    try {
+      if (!caddyInstalled) {
+        await runBootstrap("InstallCaddy" as BootstrapAction);
+        if (!mountedRef.current || opRef.current !== opId) return;
+      }
+
+      const state = await scanMachine();
+      if (!mountedRef.current || opRef.current !== opId) return;
+      setMachineState(state);
+      setScanError(null);
+
+      const result = await configureManagedCaddy(installPath, domain, port);
+      if (!mountedRef.current || opRef.current !== opId) return;
+
+      showStatus(
+        "success",
+        `${result} The remaining manual steps are making sure DNS points here and that ports 80 and 443 reach this computer.`,
+      );
+    } catch (err) {
+      if (!mountedRef.current || opRef.current !== opId) return;
+      showStatus("error", friendlyError(String(err)));
+    } finally {
+      if (mountedRef.current && opRef.current === opId) {
+        setConfiguringCaddy(false);
+      }
+    }
+  };
+
   const handleConnectZeroTrust = async () => {
     const url = permanentDomain.trim().replace(/\/+$/, "");
     const token = tunnelConfig.trim();
 
     if (!url || !token) {
-      setStatusMessage("Both the public URL and tunnel token are required.");
+      showStatus("error", "Both the public URL and tunnel token are required.");
       return;
     }
     if (!url.startsWith("https://")) {
-      setStatusMessage("URL must start with https://");
+      showStatus("error", "URL must start with https://");
       return;
     }
     try {
       new URL(url);
     } catch {
-      setStatusMessage("Invalid URL format. Enter a full URL like https://postiz.example.com");
+      showStatus("error", "Invalid URL format. Enter a full URL like https://postiz.example.com");
       return;
     }
 
     const opId = ++opRef.current;
     setApplying(true);
-    setStatusMessage("Connecting Cloudflare tunnel...");
+    showStatus("loading", "Connecting Cloudflare tunnel...");
     setUnreachableUrl(null);
 
     try {
@@ -280,14 +370,14 @@ export function CreateWebLink() {
       setTunnelProvider("cloudflared");
       setTunnelConfig(token);
       setTunnelStatus("running");
-      setStatusMessage("Cloudflare tunnel connected!");
+      showStatus("success", "Cloudflare tunnel connected!");
       setEditingActiveLink(false);
       setSelectedMethod(null);
       await saveResumeState();
       await refreshLinkSnapshot().catch(() => {});
     } catch (err) {
       if (!mountedRef.current || opRef.current !== opId) return;
-      setStatusMessage(friendlyError(String(err)));
+      showStatus("error", friendlyError(String(err)));
     } finally {
       if (mountedRef.current && opRef.current === opId) setApplying(false);
     }
@@ -298,7 +388,7 @@ export function CreateWebLink() {
   const handleChooseLocalOnly = async () => {
     const opId = ++opRef.current;
     setSwitchingLocal(true);
-    setStatusMessage("Switching to local-only mode...");
+    showStatus("loading", "Switching to local-only mode...");
 
     try {
       const previousMainUrl = await switchToLocalOnly(installPath, port);
@@ -319,7 +409,7 @@ export function CreateWebLink() {
       setTunnelConfig("");
       setTunnelUrl(null);
       setTunnelStatus("idle");
-      setStatusMessage("");
+      clearStatus();
       setEditingActiveLink(false);
       setSelectedMethod(null);
       setUnreachableUrl(null);
@@ -327,7 +417,7 @@ export function CreateWebLink() {
       await refreshLinkSnapshot().catch(() => {});
     } catch (err) {
       if (!mountedRef.current || opRef.current !== opId) return;
-      setStatusMessage(friendlyError(String(err)));
+      showStatus("error", friendlyError(String(err)));
     } finally {
       if (mountedRef.current && opRef.current === opId) {
         setSwitchingLocal(false);
@@ -339,14 +429,14 @@ export function CreateWebLink() {
 
   const handleChangeLink = () => {
     setEditingActiveLink(true);
-    setStatusMessage("");
+    clearStatus();
     setSelectedMethod(null);
     setUnreachableUrl(null);
   };
 
   const handleSelectMethod = (method: LinkMethod) => {
     setSelectedMethod((current) => (current === method ? null : method));
-    setStatusMessage("");
+    clearStatus();
     setUnreachableUrl(null);
   };
 
@@ -500,7 +590,7 @@ export function CreateWebLink() {
                   onClick={() => {
                     setEditingActiveLink(false);
                     setSelectedMethod(null);
-                    setStatusMessage("");
+                    clearStatus();
                     setUnreachableUrl(null);
                   }}
                 >
@@ -530,8 +620,9 @@ export function CreateWebLink() {
                     </span>
                   </p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Best if you want full control and can manage DNS plus a
-                    reverse proxy such as Caddy, Nginx, or Traefik.
+                    Best if you want your own domain. The wizard can manage
+                    Caddy for you, or you can use your own Nginx, Traefik, or
+                    other reverse proxy.
                   </p>
                 </div>
               </div>
@@ -613,7 +704,7 @@ export function CreateWebLink() {
                     <li>Choose an unused subdomain such as `postiz.yourdomain.com`.</li>
                     <li>Create a DNS record for that subdomain pointing to your public IP.</li>
                     <li>Forward ports `80` and `443` to the computer running Postiz.</li>
-                    <li>Run Caddy or another reverse proxy that sends that hostname to `http://localhost:{port}`.</li>
+                    <li>Let the wizard set up Caddy for you, or point your own reverse proxy at `http://localhost:{port}`.</li>
                     <li>Open `https://postiz.yourdomain.com` in a browser and make sure it loads.</li>
                     <li>Paste that exact URL below, then click `Verify & Apply`.</li>
                   </ol>
@@ -745,13 +836,13 @@ export function CreateWebLink() {
                     onClick={() => setShowCaddy(true)}
                     className={`px-2 py-1 rounded ${showCaddy ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
                   >
-                    Caddy (easiest)
+                    Let the app set up Caddy
                   </button>
                   <button
                     onClick={() => setShowCaddy(false)}
                     className={`px-2 py-1 rounded ${!showCaddy ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
                   >
-                    I already have a proxy
+                    I already have my own proxy
                   </button>
                 </div>
 
@@ -764,30 +855,20 @@ export function CreateWebLink() {
                       <p className="text-xs text-gray-600">
                         Caddy is a web server and reverse proxy. It can
                         automatically get and renew HTTPS certificates, which
-                        makes it one of the easiest ways to publish Postiz on
-                        your own domain.
+                        makes it the easiest proxy for the wizard to manage for
+                        you on this computer.
                       </p>
                     </div>
 
                     <div>
                       <p className="text-xs font-medium text-gray-700 mb-1">
-                        Typical Caddy setup
+                        What the wizard can do for you
                       </p>
                       <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
-                        <li>
-                          Create a DNS record for
-                          {" "}
-                          <code className="bg-white px-1 rounded">postiz.example.com</code>
-                          {" "}
-                          that points to your public IP.
-                        </li>
-                        <li>
-                          Forward ports 80 and 443 from your router or firewall
-                          to the machine running Caddy.
-                        </li>
-                        <li>
-                          Save the Caddyfile below and start or reload Caddy.
-                        </li>
+                        <li>Install Caddy if it is missing.</li>
+                        <li>Write a Postiz Caddyfile for your chosen hostname.</li>
+                        <li>Run Caddy as a Windows service on this computer.</li>
+                        <li>Start it now and keep it ready after reboot.</li>
                       </ol>
                     </div>
 
@@ -840,6 +921,7 @@ export function CreateWebLink() {
                       <li>The public URL must be the hostname users will open.</li>
                       <li>Your proxy must terminate HTTPS for that hostname.</li>
                       <li>DNS must already point that hostname to your network.</li>
+                      <li>If the wizard was previously managing Caddy here, it will disable that service before applying your own proxy setup.</li>
                     </ul>
                   </div>
                 )}
@@ -849,12 +931,44 @@ export function CreateWebLink() {
                   placeholder="https://postiz.example.com"
                   value={permanentDomain}
                   onChange={(e) => setPermanentDomain(e.target.value)}
-                  disabled={applying}
+                  disabled={applying || configuringCaddy}
                 />
+
+                {showCaddy && (
+                  <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 space-y-3">
+                    <StatusIndicator
+                      status={configuringCaddy ? "loading" : caddyInstalled ? "success" : "warning"}
+                      label="App-managed Caddy"
+                      detail={
+                        configuringCaddy
+                          ? "Installing or configuring Caddy now..."
+                          : caddyInstalled
+                            ? "Caddy is installed. The wizard can write the config and manage it as a Windows service."
+                            : "Caddy is not installed yet. The wizard can install it and manage it as a Windows service."
+                      }
+                    />
+                    <p className="text-xs text-blue-900/80">
+                      The app can handle the reverse-proxy part on this computer
+                      and keep it running as a Windows service. You still need
+                      to point DNS to this machine and, on most home networks,
+                      forward ports 80 and 443 to it. If you switch to
+                      Cloudflare or your own proxy later, the wizard will turn
+                      this managed Caddy service back off for you.
+                    </p>
+                    <Button
+                      variant="secondary"
+                      onClick={handleSetupManagedCaddy}
+                      loading={configuringCaddy}
+                      disabled={!permanentDomain.trim() || applying || switchingLocal}
+                    >
+                      {caddyInstalled ? "Set Up Caddy For Me" : "Install And Set Up Caddy For Me"}
+                    </Button>
+                  </div>
+                )}
 
                 {statusMessage && (
                   <StatusIndicator
-                    status={applying ? "loading" : unreachableUrl ? "warning" : "error"}
+                    status={statusTone}
                     label={statusMessage}
                   />
                 )}
@@ -885,7 +999,7 @@ export function CreateWebLink() {
                       opRef.current++;
                       try { await cancelDockerOperation(); } catch {}
                       setApplying(false);
-                      setStatusMessage("Cancelled.");
+                      showStatus("warning", "Cancelled.");
                     }}
                   >
                     Cancel
@@ -895,9 +1009,9 @@ export function CreateWebLink() {
                 <div className="flex items-center gap-2">
                   <Button
                     onClick={() => handleApplyCustomDomain(false)}
-                    disabled={!permanentDomain.trim() || applying}
+                    disabled={!permanentDomain.trim() || applying || configuringCaddy}
                   >
-                    {applying ? "Applying..." : "Verify & Apply"}
+                    {applying ? "Applying..." : "Verify & Apply To Postiz"}
                   </Button>
                 </div>
 
@@ -1140,7 +1254,7 @@ NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api`}
 
                 {statusMessage && (
                   <StatusIndicator
-                    status={applying ? "loading" : "error"}
+                    status={statusTone}
                     label={statusMessage}
                   />
                 )}
@@ -1153,7 +1267,7 @@ NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api`}
                       try { await stopTunnel(); } catch {}
                       try { await cancelDockerOperation(); } catch {}
                       setApplying(false);
-                      setStatusMessage("Cancelled.");
+                      showStatus("warning", "Cancelled.");
                     }}
                   >
                     Cancel
@@ -1193,9 +1307,9 @@ NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api`}
                   >
                     http://localhost:{port}
                   </button>{" "}
-                  on this computer only. You can still use Postiz to draft and
-                  organize content, but connecting social media accounts requires
-                  a public URL.
+                  on this computer only. Many providers can still use that local
+                  callback URL, but some providers, such as TikTok, require a
+                  permanent public domain.
                 </p>
 
                 {configuredProviders.length > 0 && (
@@ -1212,8 +1326,10 @@ NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api`}
                           ? "provider"
                           : "providers"}{" "}
                         ({configuredProviders.map(([name]) => name).join(", ")}
-                        ). OAuth callbacks require a public URL, so these
-                        integrations won't work in local-only mode.
+                        ). Providers that support localhost callback URLs can
+                        usually keep working after you update their app settings,
+                        but providers that require a permanent public domain
+                        will need the Web Link step enabled again.
                       </p>
                     </div>
                   </div>
@@ -1228,7 +1344,7 @@ NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api`}
                         opRef.current++;
                         try { await cancelDockerOperation(); } catch {}
                         setSwitchingLocal(false);
-                        setStatusMessage("Switch cancelled.");
+                        showStatus("warning", "Switch cancelled.");
                       }}
                     >
                       Cancel
@@ -1278,13 +1394,14 @@ NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api`}
               on this computer only.
             </p>
             <p className="text-sm text-gray-500">
-              You can set up a web link by choosing a method above.
+              You can keep using local callback URLs, or set up a web link above
+              for providers that need a permanent public domain.
             </p>
             <Button
               variant="secondary"
               onClick={() => {
                 handleSelectMethod("custom-domain");
-                setStatusMessage("");
+                clearStatus();
               }}
             >
               Set up a web link

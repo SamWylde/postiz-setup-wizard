@@ -12,6 +12,7 @@ export interface MachineState {
   docker_running: boolean;
   docker_linux_mode: boolean;
   cloudflared_installed: boolean;
+  caddy_installed: boolean;
   ssh_available: boolean;
   disk_space_gb: number;
   ram_available_gb: number;

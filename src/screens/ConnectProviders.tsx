@@ -275,6 +275,7 @@ export function ConnectProviders() {
     tunnelUrl,
     tunnelMode,
     permanentDomain,
+    port,
     installPath,
     providers: providerStatuses,
     setProviderStatus,
@@ -287,8 +288,6 @@ export function ConnectProviders() {
   // Track which providers have been staged but not yet applied
   const [stagedProviders, setStagedProviders] = useState<Set<string>>(new Set());
   const applyOpRef = useRef(0);
-
-  const baseUrl = tunnelUrl ?? (tunnelMode === "permanent" && permanentDomain ? permanentDomain : "");
 
   const handleSaveProvider = async (
     provider: ProviderDefinition,
@@ -310,8 +309,8 @@ export function ConnectProviders() {
     setApplyError(null);
     try {
       // Re-apply tunnel URLs before restarting so Docker picks them up
-      if (baseUrl && tunnelMode !== "none") {
-        await updateBaseUrls(installPath, baseUrl);
+      if (!usingLocalCallbacks && publicBaseUrl) {
+        await updateBaseUrls(installPath, publicBaseUrl);
       }
       await applyConfigTransaction(installPath);
       if (applyOpRef.current !== opId) return; // cancelled
@@ -338,17 +337,52 @@ export function ConnectProviders() {
 
   const activeProviderDef = providers.find((p) => p.id === activeProvider);
 
-  const noPublicUrl = tunnelMode === "none" || !baseUrl;
+  const localBaseUrl = `http://localhost:${port}`;
+  const usingLocalCallbacks = tunnelMode === "none";
+  const publicBaseUrl =
+    tunnelUrl ??
+    (tunnelMode === "permanent" && permanentDomain ? permanentDomain : "");
+  const missingPublicBaseUrl = !usingLocalCallbacks && !publicBaseUrl;
+  const baseUrl = usingLocalCallbacks ? localBaseUrl : publicBaseUrl;
   const popularProviders = providers.filter((p) => p.popular);
   const otherProviders = providers.filter((p) => !p.popular);
+
+  const providerNeedsCallbackBase = (provider: ProviderDefinition) =>
+    Boolean(provider.callbackUrlTemplate.trim() || provider.homepageUrlTemplate?.trim());
+
+  const getProviderGate = (provider: ProviderDefinition) => {
+    if (provider.gated) {
+      return provider.gated;
+    }
+
+    if (provider.requiresPermanentDomain && tunnelMode !== "permanent") {
+      return "Needs permanent domain";
+    }
+
+    if (usingLocalCallbacks) {
+      if (
+        provider.noEnvNeeded ||
+        provider.supportsLocalCallback ||
+        !providerNeedsCallbackBase(provider)
+      ) {
+        return null;
+      }
+      return "Needs web link";
+    }
+
+    if (missingPublicBaseUrl && providerNeedsCallbackBase(provider)) {
+      return "Web link unavailable";
+    }
+
+    return null;
+  };
 
   const renderProviderCard = (provider: ProviderDefinition) => {
     const status = stagedProviders.has(provider.id)
       ? "staged" as const
       : providerStatuses[provider.id] ?? "unconfigured";
-    const isGated = noPublicUrl || (provider.requiresPermanentDomain
-      ? tunnelMode !== "permanent"
-      : !!provider.gated);
+    const gateReason = getProviderGate(provider);
+    const isGated = gateReason !== null;
     const isNoEnv = !!provider.noEnvNeeded;
 
     return (
@@ -375,11 +409,7 @@ export function ConnectProviders() {
           </p>
           <p className="text-xs text-gray-500">
             {isGated
-              ? provider.requiresPermanentDomain
-                ? "Needs permanent domain"
-                : noPublicUrl
-                  ? "Needs web link"
-                  : "Not available"
+              ? gateReason
               : isNoEnv && status !== "configured" && status !== "staged"
                 ? "No setup needed"
                 : status === "configured"
@@ -413,21 +443,32 @@ export function ConnectProviders() {
         Connect social platforms
       </h2>
 
-      {noPublicUrl ? (
-        <>
-          <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-4 mb-6">
-            <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-            <div className="text-sm text-amber-800">
-              <p className="font-medium mb-1">No public URL configured</p>
-              <p>
-                Social media platforms need a public URL to connect with Postiz.
-                You're using local-only mode, so you can skip this step for now.
-                Go back to the previous step to create a web link if you'd like
-                to connect platforms.
-              </p>
-            </div>
+      {usingLocalCallbacks ? (
+        <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-4 mb-6">
+          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-800">
+            <p className="font-medium mb-1">Using local callback URLs</p>
+            <p>
+              Postiz can still use{" "}
+              <span className="font-mono">http://localhost:{port}</span> for
+              many provider callback URLs. Providers that require a permanent
+              public domain, such as TikTok, will stay locked until you
+              configure one in the Web Link step.
+            </p>
           </div>
-        </>
+        </div>
+      ) : missingPublicBaseUrl ? (
+        <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-4 mb-6">
+          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-800">
+            <p className="font-medium mb-1">Your web link is unavailable right now</p>
+            <p>
+              Reconnect or repair the Web Link step before setting up providers
+              that need callback URLs. Providers that do not use callback URLs
+              can still be configured.
+            </p>
+          </div>
+        </div>
       ) : (
         <p className="text-gray-600 mb-6">
           Most people only need 1 or 2 platforms to get started. You can always
@@ -464,11 +505,12 @@ export function ConnectProviders() {
       </div>
 
       {/* Gated provider note */}
-      {tunnelMode !== "permanent" && !noPublicUrl && (
+      {(tunnelMode !== "permanent" || missingPublicBaseUrl) && (
         <Card className="mb-6">
           <p className="text-xs text-gray-500">
-            Some platforms (like TikTok) require a permanent domain. Go back to
-            the Web Link step and configure your own domain to enable them.
+            {missingPublicBaseUrl
+              ? "Your current web link is not available, so callback-based providers stay locked until that is fixed."
+              : "Some platforms (like TikTok) require a permanent domain. Go back to the Web Link step and configure your own domain to enable them."}
           </p>
         </Card>
       )}
@@ -514,7 +556,7 @@ export function ConnectProviders() {
 
       <NavigationButtons
         canProceed={true}
-        nextLabel={noPublicUrl ? "Skip & Continue" : "Apply & Continue"}
+        nextLabel="Apply & Continue"
         loading={applying}
         onNext={handleNext}
       />

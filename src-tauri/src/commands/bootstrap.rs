@@ -14,6 +14,7 @@ pub struct MachineState {
     pub docker_running: bool,
     pub docker_linux_mode: bool,
     pub cloudflared_installed: bool,
+    pub caddy_installed: bool,
     pub ssh_available: bool,
     pub disk_space_gb: f64,
     pub ram_available_gb: f64,
@@ -28,6 +29,15 @@ fn check_command(cmd: &str, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
+fn check_resolved_binary(name: &str, args: &[&str]) -> bool {
+    let binary = resolve_binary(name);
+    silent_cmd(&binary)
+        .args(args)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// Resolve a binary by checking PostizWizard local install first, then system PATH.
 pub fn resolve_binary(name: &str) -> String {
     let local = dirs::data_local_dir()
@@ -36,10 +46,20 @@ pub fn resolve_binary(name: &str) -> String {
         .join(name)
         .join(format!("{}.exe", name));
     if local.exists() {
-        local.to_string_lossy().to_string()
-    } else {
-        name.to_string()
+        return local.to_string_lossy().to_string();
     }
+
+    let winget_link = dirs::data_local_dir()
+        .unwrap_or_default()
+        .join("Microsoft")
+        .join("WinGet")
+        .join("Links")
+        .join(format!("{}.exe", name));
+    if winget_link.exists() {
+        return winget_link.to_string_lossy().to_string();
+    }
+
+    name.to_string()
 }
 
 fn get_command_output(cmd: &str, args: &[&str]) -> Option<String> {
@@ -90,7 +110,8 @@ fn scan_machine_blocking() -> (MachineState, Option<String>) {
         .unwrap_or(false);
 
     // Check tunnel providers
-    let cloudflared_installed = check_command("cloudflared", &["--version"]);
+    let cloudflared_installed = check_resolved_binary("cloudflared", &["--version"]);
+    let caddy_installed = check_resolved_binary("caddy", &["version"]);
     let ssh_available = check_command("ssh", &["-V"]);
 
     // Check disk space
@@ -147,6 +168,7 @@ fn scan_machine_blocking() -> (MachineState, Option<String>) {
         docker_running,
         docker_linux_mode,
         cloudflared_installed,
+        caddy_installed,
         ssh_available,
         disk_space_gb,
         ram_available_gb,
@@ -163,6 +185,7 @@ pub enum BootstrapAction {
     StartDocker,
     SwitchLinuxContainers,
     InstallCloudflared,
+    InstallCaddy,
 }
 
 #[tauri::command]
@@ -280,6 +303,25 @@ pub async fn run_bootstrap(action: BootstrapAction) -> Result<String, String> {
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 Err(format!("Installation failed: {} {}", stdout, stderr))
+            }
+        }
+        BootstrapAction::InstallCaddy => {
+            let output = silent_cmd("winget")
+                .args([
+                    "install",
+                    "CaddyServer.Caddy",
+                    "--accept-source-agreements",
+                    "--accept-package-agreements",
+                ])
+                .output()
+                .map_err(|e| format!("Failed to install Caddy: {}", e))?;
+
+            if output.status.success() {
+                Ok("Caddy installed successfully.".to_string())
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                Err(format!("Caddy installation failed: {} {}", stdout, stderr))
             }
         }
     }

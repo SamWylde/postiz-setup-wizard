@@ -40,7 +40,8 @@ export type BootstrapAction =
   | "InstallDocker"
   | "StartDocker"
   | "SwitchLinuxContainers"
-  | "InstallCloudflared";
+  | "InstallCloudflared"
+  | "InstallCaddy";
 
 export const runBootstrap = (action: BootstrapAction) =>
   invoke<string>("run_bootstrap", { action });
@@ -131,6 +132,13 @@ export interface PublicUrlCheck {
 
 export const applyManualDomain = (path: string, publicUrl: string, force?: boolean) =>
   invoke<string>("apply_manual_domain", { path, publicUrl, force: force ?? false });
+
+export const configureManagedCaddy = (
+  path: string, publicUrl: string, port: number,
+) => invoke<string>("configure_managed_caddy", { path, publicUrl, port });
+
+export const disableManagedCaddy = (path: string) =>
+  invoke<string>("disable_managed_caddy", { path });
 
 export const connectCloudflareZeroTrust = (
   path: string, port: number, publicUrl: string, token: string,

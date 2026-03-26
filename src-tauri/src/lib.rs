@@ -286,6 +286,8 @@ pub fn run() {
             commands::resume::clear_transfer_review_and_save,
             commands::upgrade::check_postiz_update,
             commands::upgrade::upgrade_postiz,
+            commands::web_link::configure_managed_caddy,
+            commands::web_link::disable_managed_caddy,
             commands::web_link::apply_manual_domain,
             commands::web_link::switch_to_local_only,
             commands::web_link::connect_cloudflare_zero_trust,

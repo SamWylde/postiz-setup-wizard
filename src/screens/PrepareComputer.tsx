@@ -190,6 +190,21 @@ export function PrepareComputer() {
                 }
               />
               <StatusIndicator
+                status={
+                  machineState.caddy_installed
+                    ? "success"
+                    : bootstrapStatus === "checking"
+                      ? "loading"
+                      : "warning"
+                }
+                label="Caddy (optional)"
+                detail={
+                  machineState.caddy_installed
+                    ? "Caddy installed"
+                    : "Not installed — the wizard can install and configure it later if you choose the managed custom-domain setup"
+                }
+              />
+              <StatusIndicator
                 status={getStatus(machineState.disk_space_gb >= 3)}
                 label="Disk space"
                 detail={`${machineState.disk_space_gb.toFixed(1)} GB available (need 3 GB)`}

@@ -21,6 +21,7 @@ export interface ProviderDefinition {
   popular?: boolean;
   requiresPermanentDomain?: boolean;
   temporaryLinkNote?: string;
+  supportsLocalCallback?: boolean;
 }
 
 export const providers: ProviderDefinition[] = [
@@ -38,6 +39,7 @@ export const providers: ProviderDefinition[] = [
     callbackUrlTemplate: "{baseUrl}/integrations/social/facebook",
     homepageUrlTemplate: "{baseUrl}/",
     requiresHttps: false,
+    supportsLocalCallback: true,
     instructions: [
       { text: "Go to Meta for Developers and click 'Create App'" },
       { text: "Select 'Other' as the use case, then choose 'Business'" },
@@ -79,6 +81,7 @@ export const providers: ProviderDefinition[] = [
     callbackUrlTemplate: "{baseUrl}/integrations/social/instagram",
     requiresHttps: false,
     sharedWith: "facebook",
+    supportsLocalCallback: true,
     instructions: [
       {
         text: "Use the same Meta app as Facebook (or create a new one)",
@@ -111,6 +114,7 @@ export const providers: ProviderDefinition[] = [
     ],
     callbackUrlTemplate: "{baseUrl}/integrations/social/linkedin",
     requiresHttps: false,
+    supportsLocalCallback: true,
     instructions: [
       { text: "Go to LinkedIn Developers and click 'Create App'" },
       {
@@ -142,6 +146,7 @@ export const providers: ProviderDefinition[] = [
     ],
     callbackUrlTemplate: "{baseUrl}/integrations/social/x",
     requiresHttps: false,
+    supportsLocalCallback: true,
     instructions: [
       { text: "Go to X Developer Portal and sign up for the Free tier" },
       { text: "Create a Project, then create an App inside it" },
@@ -173,6 +178,7 @@ export const providers: ProviderDefinition[] = [
     ],
     callbackUrlTemplate: "{baseUrl}/integrations/social/reddit",
     requiresHttps: false,
+    supportsLocalCallback: true,
     instructions: [
       {
         text: "Go to Reddit App Preferences and click 'create another app'",
@@ -199,6 +205,7 @@ export const providers: ProviderDefinition[] = [
     ],
     callbackUrlTemplate: "{baseUrl}/integrations/social/threads",
     requiresHttps: false,
+    supportsLocalCallback: true,
     instructions: [
       { text: "Go to Meta for Developers (use same or new app)" },
       { text: "Add 'Access the Threads API' product" },
@@ -228,6 +235,7 @@ export const providers: ProviderDefinition[] = [
     ],
     callbackUrlTemplate: "{baseUrl}/integrations/social/youtube",
     requiresHttps: false,
+    supportsLocalCallback: true,
     instructions: [
       { text: "Go to Google Cloud Console > APIs & Services > Credentials" },
       { text: "Create a new project if needed" },
@@ -257,6 +265,7 @@ export const providers: ProviderDefinition[] = [
     callbackUrlTemplate: "{baseUrl}/integrations/social/tiktok",
     requiresHttps: true,
     requiresPermanentDomain: true,
+    supportsLocalCallback: false,
     instructions: [
       { text: "Go to TikTok for Developers and create an app" },
       { text: "Add Login Kit and Content Posting API products" },
@@ -282,6 +291,7 @@ export const providers: ProviderDefinition[] = [
     ],
     callbackUrlTemplate: "{baseUrl}/integrations/social/pinterest",
     requiresHttps: false,
+    supportsLocalCallback: true,
     instructions: [
       {
         text: "Go to Pinterest Developer Dashboard and create an app (requires a Pinterest Business account)",
@@ -304,6 +314,7 @@ export const providers: ProviderDefinition[] = [
     callbackUrlTemplate: "",
     requiresHttps: false,
     noEnvNeeded: true,
+    supportsLocalCallback: true,
     instructions: [
       {
         text: "No developer setup needed! Connect Bluesky directly in the Postiz web interface using your app password.",
@@ -323,6 +334,7 @@ export const providers: ProviderDefinition[] = [
     ],
     callbackUrlTemplate: "",
     requiresHttps: false,
+    supportsLocalCallback: true,
     instructions: [
       { text: "Go to Discord Developer Portal and create a new application" },
       { text: "Go to OAuth2 tab and copy Client ID and Client Secret" },
@@ -350,6 +362,7 @@ export const providers: ProviderDefinition[] = [
     ],
     callbackUrlTemplate: "",
     requiresHttps: false,
+    supportsLocalCallback: true,
     instructions: [
       {
         text: "On your Mastodon instance, go to Settings > Development > New Application",

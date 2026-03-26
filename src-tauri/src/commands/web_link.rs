@@ -11,6 +11,13 @@ use super::tunnel::{is_pid_alive, kill_existing_tunnel, start_cloudflared};
 use crate::commands::bootstrap::resolve_binary;
 use crate::state::{PublicUrlCheck, SharedState, TunnelProvider};
 
+const MANAGED_CADDY_ADMIN_ADDR: &str = "127.0.0.1:2027";
+const MANAGED_CADDY_SERVICE_NAME: &str = "PostizWizardCaddy";
+const MANAGED_CADDY_SERVICE_DESCRIPTION: &str =
+    "Managed Caddy reverse proxy for Postiz Setup Wizard.";
+const MANAGED_CADDY_HTTP_RULE_NAME: &str = "Postiz Wizard Caddy HTTP";
+const MANAGED_CADDY_HTTPS_RULE_NAME: &str = "Postiz Wizard Caddy HTTPS";
+
 #[derive(Clone)]
 struct PreviousLinkState {
     tunnel_mode: String,
@@ -45,6 +52,491 @@ fn write_env_contents(path: &Path, contents: &str) -> Result<(), String> {
     fs::write(&tmp, contents).map_err(|e| format!("Failed to write temp env file: {}", e))?;
     fs::rename(&tmp, path).map_err(|e| format!("Failed to replace env file: {}", e))?;
     Ok(())
+}
+
+fn validate_public_base_url(public_url: &str) -> Result<(String, String), String> {
+    let normalized = public_url.trim().trim_end_matches('/').to_string();
+    let parsed = reqwest::Url::parse(&normalized).map_err(|_| {
+        "Invalid URL format. Enter a full URL like https://postiz.example.com".to_string()
+    })?;
+
+    if parsed.scheme() != "https" {
+        return Err("Domain must start with https://".to_string());
+    }
+
+    if parsed.host_str().is_none() {
+        return Err("The public URL must include a hostname.".to_string());
+    }
+
+    if parsed.path() != "/" || parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(
+            "Use just the site URL, like https://postiz.example.com, with no path, query, or fragment."
+                .to_string(),
+        );
+    }
+
+    Ok((
+        normalized,
+        parsed.host_str().unwrap_or_default().to_string(),
+    ))
+}
+
+fn managed_caddy_dir(install_path: &Path) -> PathBuf {
+    install_path.join("proxy").join("caddy")
+}
+
+fn managed_caddy_config_path(install_path: &Path) -> PathBuf {
+    managed_caddy_dir(install_path).join("Caddyfile")
+}
+
+fn build_managed_caddyfile(host: &str, port: u16) -> String {
+    format!(
+        "{{\n    admin {}\n}}\n\n{} {{\n    reverse_proxy 127.0.0.1:{}\n}}\n",
+        MANAGED_CADDY_ADMIN_ADDR, host, port
+    )
+}
+
+fn build_managed_caddy_service_bin_path(caddy_binary: &Path, config_path: &Path) -> String {
+    format!(
+        "\"{}\" run --config \"{}\" --adapter caddyfile",
+        caddy_binary.display(),
+        config_path.display()
+    )
+}
+
+fn write_managed_caddyfile(install_path: &Path, host: &str, port: u16) -> Result<PathBuf, String> {
+    let dir = managed_caddy_dir(install_path);
+    fs::create_dir_all(&dir)
+        .map_err(|e| format!("Failed to create managed Caddy directory: {}", e))?;
+
+    let config_path = managed_caddy_config_path(install_path);
+    fs::write(&config_path, build_managed_caddyfile(host, port))
+        .map_err(|e| format!("Failed to write managed Caddyfile: {}", e))?;
+
+    Ok(config_path)
+}
+
+fn run_caddy_output(args: &[&str]) -> Result<std::process::Output, String> {
+    let binary = resolve_binary("caddy");
+    silent_cmd(&binary)
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to run Caddy: {}", e))
+}
+
+fn command_error(context: &str, output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() {
+        stderr
+    } else if !stdout.is_empty() {
+        stdout
+    } else {
+        "No additional details were returned.".to_string()
+    };
+    format!("{} {}", context, detail)
+}
+
+fn output_text_lower(output: &std::process::Output) -> String {
+    format!(
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
+    .to_lowercase()
+}
+
+fn caddy_admin_unreachable(output: &std::process::Output) -> bool {
+    let text = output_text_lower(output);
+    text.contains("connection refused")
+        || text.contains("actively refused")
+        || text.contains("timeout")
+        || text.contains("no such host")
+}
+
+fn sc_service_not_found(output: &std::process::Output) -> bool {
+    let text = output_text_lower(output);
+    text.contains("1060") || text.contains("does not exist")
+}
+
+fn sc_service_already_running(output: &std::process::Output) -> bool {
+    let text = output_text_lower(output);
+    text.contains("1056") || text.contains("already running")
+}
+
+fn sc_service_not_started(output: &std::process::Output) -> bool {
+    let text = output_text_lower(output);
+    text.contains("1062") || text.contains("has not been started")
+}
+
+fn locate_caddy_binary() -> Result<PathBuf, String> {
+    let resolved = PathBuf::from(resolve_binary("caddy"));
+    if resolved.exists() {
+        return Ok(fs::canonicalize(&resolved).unwrap_or(resolved));
+    }
+
+    let output = silent_cmd("where")
+        .args(["caddy"])
+        .output()
+        .map_err(|e| format!("Failed to locate Caddy: {}", e))?;
+    if !output.status.success() {
+        return Err("Caddy executable not found. Install Caddy first.".to_string());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let path = stdout
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| "Caddy executable not found. Install Caddy first.".to_string())?;
+
+    let path = PathBuf::from(path);
+    Ok(fs::canonicalize(&path).unwrap_or(path))
+}
+
+fn run_sc_output(args: &[&str]) -> Result<std::process::Output, String> {
+    silent_cmd("sc.exe")
+        .args(args)
+        .output()
+        .map_err(|e| format!("Failed to manage Windows service: {}", e))
+}
+
+fn managed_caddy_service_exists() -> Result<bool, String> {
+    let output = run_sc_output(&["query", MANAGED_CADDY_SERVICE_NAME])?;
+    if output.status.success() {
+        Ok(true)
+    } else if sc_service_not_found(&output) {
+        Ok(false)
+    } else {
+        Err(command_error(
+            "Managed Caddy service status could not be checked.",
+            &output,
+        ))
+    }
+}
+
+fn managed_caddy_service_running() -> Result<bool, String> {
+    let output = run_sc_output(&["query", MANAGED_CADDY_SERVICE_NAME])?;
+    if output.status.success() {
+        Ok(output_text_lower(&output).contains("running"))
+    } else if sc_service_not_found(&output) {
+        Ok(false)
+    } else {
+        Err(command_error(
+            "Managed Caddy service status could not be checked.",
+            &output,
+        ))
+    }
+}
+
+fn wait_for_managed_caddy_service_state(should_be_running: bool) -> Result<bool, String> {
+    for _ in 0..15 {
+        if managed_caddy_service_running()? == should_be_running {
+            return Ok(true);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    Ok(false)
+}
+
+fn ensure_managed_caddy_service(config_path: &Path) -> Result<(), String> {
+    let caddy_binary = locate_caddy_binary()?;
+    let bin_path = build_managed_caddy_service_bin_path(&caddy_binary, config_path);
+
+    if managed_caddy_service_exists()? {
+        let output = run_sc_output(&[
+            "config",
+            MANAGED_CADDY_SERVICE_NAME,
+            "start=",
+            "auto",
+            "binPath=",
+            &bin_path,
+        ])?;
+        if !output.status.success() {
+            return Err(command_error(
+                "Managed Caddy service could not be updated.",
+                &output,
+            ));
+        }
+    } else {
+        let output = run_sc_output(&[
+            "create",
+            MANAGED_CADDY_SERVICE_NAME,
+            "start=",
+            "auto",
+            "binPath=",
+            &bin_path,
+            "displayname=",
+            "Postiz Wizard Managed Caddy",
+        ])?;
+        if !output.status.success() {
+            return Err(command_error(
+                "Managed Caddy service could not be created.",
+                &output,
+            ));
+        }
+    }
+
+    let description = run_sc_output(&[
+        "description",
+        MANAGED_CADDY_SERVICE_NAME,
+        MANAGED_CADDY_SERVICE_DESCRIPTION,
+    ])?;
+    if !description.status.success() {
+        return Err(command_error(
+            "Managed Caddy service description could not be updated.",
+            &description,
+        ));
+    }
+
+    let failure_flag = run_sc_output(&["failureflag", MANAGED_CADDY_SERVICE_NAME, "1"])?;
+    if !failure_flag.status.success() {
+        return Err(command_error(
+            "Managed Caddy service recovery settings could not be enabled.",
+            &failure_flag,
+        ));
+    }
+
+    let failure = run_sc_output(&[
+        "failure",
+        MANAGED_CADDY_SERVICE_NAME,
+        "reset=",
+        "86400",
+        "actions=",
+        "restart/60000/restart/60000/restart/60000",
+    ])?;
+    if !failure.status.success() {
+        return Err(command_error(
+            "Managed Caddy service restart policy could not be updated.",
+            &failure,
+        ));
+    }
+
+    Ok(())
+}
+
+fn stop_caddy_admin_process() -> Result<(), String> {
+    let output = run_caddy_output(&["stop", "--address", MANAGED_CADDY_ADMIN_ADDR])?;
+    if output.status.success() || caddy_admin_unreachable(&output) {
+        Ok(())
+    } else {
+        Err(command_error(
+            "Managed Caddy could not be stopped automatically.",
+            &output,
+        ))
+    }
+}
+
+fn start_managed_caddy_service() -> Result<(), String> {
+    let output = run_sc_output(&["start", MANAGED_CADDY_SERVICE_NAME])?;
+    if !output.status.success() && !sc_service_already_running(&output) {
+        return Err(command_error(
+            "Managed Caddy service could not be started.",
+            &output,
+        ));
+    }
+
+    if wait_for_managed_caddy_service_state(true)? {
+        Ok(())
+    } else {
+        Err("Managed Caddy service did not reach the running state.".to_string())
+    }
+}
+
+fn stop_managed_caddy_service() -> Result<(), String> {
+    if !managed_caddy_service_exists()? {
+        return Ok(());
+    }
+
+    let output = run_sc_output(&["stop", MANAGED_CADDY_SERVICE_NAME])?;
+    if !output.status.success() && !sc_service_not_started(&output) {
+        return Err(command_error(
+            "Managed Caddy service could not be stopped.",
+            &output,
+        ));
+    }
+
+    if wait_for_managed_caddy_service_state(false)? {
+        Ok(())
+    } else {
+        Err("Managed Caddy service did not stop cleanly.".to_string())
+    }
+}
+
+fn delete_managed_caddy_service() -> Result<(), String> {
+    if !managed_caddy_service_exists()? {
+        return Ok(());
+    }
+
+    let output = run_sc_output(&["delete", MANAGED_CADDY_SERVICE_NAME])?;
+    if output.status.success() || sc_service_not_found(&output) {
+        Ok(())
+    } else {
+        Err(command_error(
+            "Managed Caddy service could not be removed.",
+            &output,
+        ))
+    }
+}
+
+fn ensure_firewall_rule(rule_name: &str, port: u16) -> Result<(), String> {
+    let localport = format!("localport={}", port);
+    let name_arg = format!("name={}", rule_name);
+    let output = silent_cmd("netsh")
+        .args([
+            "advfirewall",
+            "firewall",
+            "add",
+            "rule",
+            &name_arg,
+            "dir=in",
+            "action=allow",
+            "protocol=TCP",
+            &localport,
+        ])
+        .output()
+        .map_err(|e| format!("Failed to update Windows Firewall: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(command_error(
+            "Windows Firewall could not be updated automatically.",
+            &output,
+        ))
+    }
+}
+
+fn best_effort_open_http_https_firewall() -> Option<String> {
+    let mut failures = Vec::new();
+    if let Err(err) = ensure_firewall_rule(MANAGED_CADDY_HTTP_RULE_NAME, 80) {
+        failures.push(err);
+    }
+    if let Err(err) = ensure_firewall_rule(MANAGED_CADDY_HTTPS_RULE_NAME, 443) {
+        failures.push(err);
+    }
+
+    if failures.is_empty() {
+        None
+    } else {
+        Some(
+            "Windows Firewall could not be fully updated automatically. You may need to allow inbound TCP ports 80 and 443 yourself."
+                .to_string(),
+        )
+    }
+}
+
+fn remove_firewall_rule(rule_name: &str) -> Result<(), String> {
+    let name_arg = format!("name={}", rule_name);
+    let output = silent_cmd("netsh")
+        .args(["advfirewall", "firewall", "delete", "rule", &name_arg])
+        .output()
+        .map_err(|e| format!("Failed to update Windows Firewall: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let text = output_text_lower(&output);
+        if text.contains("no rules match") {
+            Ok(())
+        } else {
+            Err(command_error(
+                "Windows Firewall rules could not be removed automatically.",
+                &output,
+            ))
+        }
+    }
+}
+
+fn stop_managed_caddy(install_path: &Path) -> Result<(), String> {
+    let mut failures = Vec::new();
+    let had_managed_config = managed_caddy_config_path(install_path).exists();
+    let had_managed_service = managed_caddy_service_exists()?;
+
+    if had_managed_service {
+        if let Err(err) = stop_managed_caddy_service() {
+            failures.push(err);
+        }
+        if let Err(err) = delete_managed_caddy_service() {
+            failures.push(err);
+        }
+    }
+
+    if install_path.exists() {
+        let _ = fs::remove_file(managed_caddy_config_path(install_path));
+        let _ = fs::remove_dir(managed_caddy_dir(install_path));
+    }
+
+    if had_managed_service || had_managed_config {
+        if let Err(err) = stop_caddy_admin_process() {
+            failures.push(err);
+        }
+    }
+
+    let _ = remove_firewall_rule(MANAGED_CADDY_HTTP_RULE_NAME);
+    let _ = remove_firewall_rule(MANAGED_CADDY_HTTPS_RULE_NAME);
+
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join(" "))
+    }
+}
+
+fn configure_managed_caddy_inner(
+    install_path: &Path,
+    public_url: &str,
+    port: u16,
+) -> Result<String, String> {
+    let (_, host) = validate_public_base_url(public_url)?;
+    let config_path = write_managed_caddyfile(install_path, &host, port)?;
+    let config_arg = config_path.to_string_lossy().to_string();
+
+    let validate = run_caddy_output(&["adapt", "--config", &config_arg, "--adapter", "caddyfile"])?;
+    if !validate.status.success() {
+        return Err(command_error(
+            "Managed Caddy configuration is invalid.",
+            &validate,
+        ));
+    }
+
+    ensure_managed_caddy_service(&config_path)?;
+
+    let firewall_note = best_effort_open_http_https_firewall();
+
+    if managed_caddy_service_running()? {
+        let reload = run_caddy_output(&[
+            "reload",
+            "--config",
+            &config_arg,
+            "--adapter",
+            "caddyfile",
+            "--address",
+            MANAGED_CADDY_ADMIN_ADDR,
+        ])?;
+        if !reload.status.success() {
+            if caddy_admin_unreachable(&reload) {
+                stop_managed_caddy_service()?;
+                start_managed_caddy_service()?;
+            } else {
+                stop_managed_caddy_service()?;
+                start_managed_caddy_service()?;
+            }
+        }
+    } else {
+        let _ = stop_caddy_admin_process();
+        start_managed_caddy_service()?;
+    }
+
+    let mut message = format!(
+        "Caddy is configured as a Windows service for {} and forwarding traffic to Postiz on localhost:{}.",
+        host, port
+    );
+    if let Some(note) = firewall_note {
+        message.push(' ');
+        message.push_str(&note);
+    }
+    Ok(message)
 }
 
 async fn wait_for_local_postiz(port: u16, state: &SharedState) -> Result<bool, String> {
@@ -264,6 +756,30 @@ async fn restore_previous_link(
 // ── apply_manual_domain ──────────────────────────────────────────────
 
 #[tauri::command]
+pub async fn configure_managed_caddy(
+    path: String,
+    public_url: String,
+    port: u16,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    let install_path = PathBuf::from(&path);
+    let (normalized_url, _) = validate_public_base_url(&public_url)?;
+
+    let _ = app.emit("docker-progress", "Writing managed Caddy configuration...");
+    let message = configure_managed_caddy_inner(&install_path, &normalized_url, port)?;
+    let _ = app.emit("docker-progress", &message);
+
+    Ok(message)
+}
+
+#[tauri::command]
+pub async fn disable_managed_caddy(path: String) -> Result<String, String> {
+    let install_path = PathBuf::from(&path);
+    stop_managed_caddy(&install_path)?;
+    Ok("App-managed Caddy has been disabled.".to_string())
+}
+
+#[tauri::command]
 pub async fn apply_manual_domain(
     path: String,
     public_url: String,
@@ -271,11 +787,7 @@ pub async fn apply_manual_domain(
     app: tauri::AppHandle,
     state: State<'_, SharedState>,
 ) -> Result<String, String> {
-    let public_url = public_url.trim().trim_end_matches('/').to_string();
-
-    if !public_url.starts_with("https://") {
-        return Err("Domain must start with https://".to_string());
-    }
+    let (public_url, _) = validate_public_base_url(&public_url)?;
 
     let install_path = PathBuf::from(&path);
     let env_path = install_path.join("postiz.env");
@@ -396,6 +908,13 @@ pub async fn switch_to_local_only(
         s.tunnel_config = None;
     }
 
+    if let Err(err) = stop_managed_caddy(&install_path) {
+        let _ = app.emit(
+            "docker-progress",
+            format!("Warning: managed Caddy may still be running: {}", err),
+        );
+    }
+
     let _ = app.emit("docker-progress", "Switched to local-only mode.");
     Ok(previous_main_url)
 }
@@ -411,12 +930,9 @@ pub async fn connect_cloudflare_zero_trust(
     app: tauri::AppHandle,
     state: State<'_, SharedState>,
 ) -> Result<String, String> {
-    let public_url = public_url.trim().trim_end_matches('/').to_string();
+    let (public_url, _) = validate_public_base_url(&public_url)?;
     let token = token.trim().to_string();
 
-    if !public_url.starts_with("https://") {
-        return Err("Domain must start with https://".to_string());
-    }
     if token.is_empty() {
         return Err("Tunnel token is required.".to_string());
     }
@@ -555,6 +1071,13 @@ pub async fn connect_cloudflare_zero_trust(
         s.tunnel_config = Some(token);
     }
 
+    if let Err(err) = stop_managed_caddy(&install_path) {
+        let _ = app.emit(
+            "docker-progress",
+            format!("Warning: managed Caddy may still be running: {}", err),
+        );
+    }
+
     if check.reachable {
         let _ = app.emit(
             "docker-progress",
@@ -608,4 +1131,49 @@ pub async fn verify_public_url(public_url: String) -> Result<PublicUrlCheck, Str
         return Err("URL is required.".to_string());
     }
     Ok(verify_public_url_inner(&public_url).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::{
+        build_managed_caddy_service_bin_path, build_managed_caddyfile, validate_public_base_url,
+        MANAGED_CADDY_ADMIN_ADDR,
+    };
+
+    #[test]
+    fn validate_public_base_url_accepts_clean_https_url() {
+        let (normalized, host) =
+            validate_public_base_url("https://postiz.example.com/").expect("valid URL");
+        assert_eq!(normalized, "https://postiz.example.com");
+        assert_eq!(host, "postiz.example.com");
+    }
+
+    #[test]
+    fn validate_public_base_url_rejects_paths() {
+        let err = validate_public_base_url("https://postiz.example.com/login")
+            .expect_err("path should be rejected");
+        assert!(err.contains("no path"));
+    }
+
+    #[test]
+    fn managed_caddyfile_uses_dedicated_admin_port_and_localhost_proxy() {
+        let config = build_managed_caddyfile("postiz.example.com", 4007);
+        assert!(config.contains(MANAGED_CADDY_ADMIN_ADDR));
+        assert!(config.contains("postiz.example.com"));
+        assert!(config.contains("reverse_proxy 127.0.0.1:4007"));
+    }
+
+    #[test]
+    fn managed_caddy_service_bin_path_quotes_binary_and_config() {
+        let command = build_managed_caddy_service_bin_path(
+            Path::new(r"C:\Program Files\Caddy\caddy.exe"),
+            Path::new(r"C:\Postiz\proxy\caddy\Caddyfile"),
+        );
+        assert_eq!(
+            command,
+            "\"C:\\Program Files\\Caddy\\caddy.exe\" run --config \"C:\\Postiz\\proxy\\caddy\\Caddyfile\" --adapter caddyfile"
+        );
+    }
 }
