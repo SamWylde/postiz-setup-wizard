@@ -5,19 +5,12 @@ use std::sync::Arc;
 use tauri::{Emitter, State};
 
 use super::{sanitize_log_line, silent_cmd};
-use crate::commands::bootstrap::resolve_binary;
 use crate::state::{SharedState, TunnelProvider};
 
 /// How long to wait before first URL poll (seconds).
 const URL_INITIAL_WAIT_SECS: u64 = 10;
 /// How long to wait for a second URL poll attempt (seconds).
 const URL_RETRY_WAIT_SECS: u64 = 10;
-/// Number of attempts to poll ngrok HTTP API (2s between each).
-const NGROK_API_POLL_ATTEMPTS: u32 = 8;
-/// Pinggy initial wait before first URL poll (seconds).
-const PINGGY_INITIAL_WAIT_SECS: u64 = 8;
-/// Pinggy retry wait (seconds).
-const PINGGY_RETRY_WAIT_SECS: u64 = 7;
 
 #[derive(Debug, serde::Serialize, Clone)]
 pub struct TunnelStatus {
@@ -32,16 +25,12 @@ type SharedUrl = Arc<std::sync::Mutex<Option<String>>>;
 enum UrlSource {
     /// Read lines from stderr; apply regex to find URL.
     Stderr(String),
-    /// Read lines from stdout; apply regex to find URL.
-    Stdout(String),
-    /// Poll an HTTP API endpoint for JSON with the URL.
-    HttpApi(String),
 }
 
 /// Check if a process with the given PID is still alive.
 /// Uses tasklist with PID filter in CSV format for reliable parsing.
 /// When no process matches, tasklist outputs an "INFO:" line.
-fn is_pid_alive(pid: u32) -> bool {
+pub(crate) fn is_pid_alive(pid: u32) -> bool {
     silent_cmd("tasklist")
         .args(["/FI", &format!("PID eq {}", pid), "/NH", "/FO", "CSV"])
         .output()
@@ -53,7 +42,7 @@ fn is_pid_alive(pid: u32) -> bool {
 }
 
 /// Kill a tunnel process by PID and clear state.
-fn kill_existing_tunnel(state: &SharedState) {
+pub(super) fn kill_existing_tunnel(state: &SharedState) {
     let existing_pid = state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid;
     if let Some(pid) = existing_pid {
         if is_pid_alive(pid) {
@@ -114,59 +103,6 @@ fn spawn_tunnel_process(
                 let _ = app_clone.emit("tunnel-status", "stopped");
             });
         }
-        UrlSource::Stdout(pattern) => {
-            let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
-            let app_clone = app.clone();
-            let url_clone = state_url.clone();
-
-            // Also drain stderr to prevent blocking
-            if let Some(stderr) = child.stderr.take() {
-                let app_err = app.clone();
-                std::thread::spawn(move || {
-                    let reader = BufReader::new(stderr);
-                    for line in reader.lines().map_while(Result::ok) {
-                        let _ = app_err.emit("tunnel-log", sanitize_log_line(&line));
-                    }
-                });
-            }
-
-            std::thread::spawn(move || {
-                let reader = BufReader::new(stdout);
-                let url_re = Regex::new(&pattern).expect("hardcoded tunnel URL regex must compile");
-                for line in reader.lines().map_while(Result::ok) {
-                    if let Some(mat) = url_re.find(&line) {
-                        let url = mat.as_str().to_string();
-                        let _ = app_clone.emit("tunnel-url", url.clone());
-                        let _ = app_clone.emit("tunnel-status", "running");
-                        *url_clone.lock().unwrap_or_else(|e| e.into_inner()) = Some(url);
-                    }
-                    let _ = app_clone.emit("tunnel-log", sanitize_log_line(&line));
-                }
-                let _ = app_clone.emit("tunnel-status", "stopped");
-            });
-        }
-        UrlSource::HttpApi(_api_url) => {
-            // For HTTP API-based URL capture (ngrok), we drain both stdout/stderr
-            // and poll the API separately in the caller.
-            if let Some(stdout) = child.stdout.take() {
-                let app_clone = app.clone();
-                std::thread::spawn(move || {
-                    let reader = BufReader::new(stdout);
-                    for line in reader.lines().map_while(Result::ok) {
-                        let _ = app_clone.emit("tunnel-log", sanitize_log_line(&line));
-                    }
-                });
-            }
-            if let Some(stderr) = child.stderr.take() {
-                let app_clone = app.clone();
-                std::thread::spawn(move || {
-                    let reader = BufReader::new(stderr);
-                    for line in reader.lines().map_while(Result::ok) {
-                        let _ = app_clone.emit("tunnel-log", sanitize_log_line(&line));
-                    }
-                });
-            }
-        }
     }
 
     Ok((pid, state_url))
@@ -187,31 +123,9 @@ async fn wait_for_url(
     state_url.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
-/// Poll ngrok's local API to get the tunnel URL.
-async fn poll_ngrok_api(api_url: &str, max_attempts: u32) -> Option<String> {
-    let client = reqwest::Client::new();
-    for _ in 0..max_attempts {
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        if let Ok(resp) = client.get(api_url).send().await {
-            if let Ok(body) = resp.text().await {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
-                    if let Some(url) = json["tunnels"]
-                        .as_array()
-                        .and_then(|arr| arr.first())
-                        .and_then(|t| t["public_url"].as_str())
-                    {
-                        return Some(url.to_string());
-                    }
-                }
-            }
-        }
-    }
-    None
-}
-
 // ── Provider-specific start functions ──
 
-async fn start_cloudflared(
+pub(super) async fn start_cloudflared(
     port: u16,
     app: &tauri::AppHandle,
     state: &SharedState,
@@ -227,7 +141,10 @@ async fn start_cloudflared(
     let (pid, state_url) = spawn_tunnel_process(
         "cloudflared",
         &["tunnel", "--url", &port_str],
-        &[("CLOUDFLARED_HOME", cloudflared_home.to_string_lossy().to_string())],
+        &[(
+            "CLOUDFLARED_HOME",
+            cloudflared_home.to_string_lossy().to_string(),
+        )],
         UrlSource::Stderr(r"https://[a-z0-9-]+\.trycloudflare\.com".to_string()),
         app,
     )?;
@@ -250,150 +167,13 @@ async fn start_cloudflared(
     }
 }
 
-async fn start_ngrok(
-    port: u16,
-    config: Option<String>,
-    app: &tauri::AppHandle,
-    state: &SharedState,
-) -> Result<String, String> {
-    let ngrok_bin = resolve_binary("ngrok");
-
-    // If authtoken provided, configure it first
-    if let Some(ref token) = config {
-        if !token.trim().is_empty() {
-            let output = silent_cmd(&ngrok_bin)
-                .args(["config", "add-authtoken", token.trim()])
-                .output()
-                .map_err(|e| format!("Failed to configure ngrok authtoken: {}", e))?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!("Failed to set ngrok authtoken: {}", stderr));
-            }
-        }
-    }
-
-    let port_str = port.to_string();
-    let (pid, _state_url) = spawn_tunnel_process(
-        &ngrok_bin,
-        &["http", &port_str, "--log", "stdout", "--log-format", "json"],
-        &[],
-        UrlSource::HttpApi("http://localhost:4040/api/tunnels".to_string()),
-        app,
-    )?;
-
-    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = Some(pid);
-
-    // Poll ngrok API for the tunnel URL
-    match poll_ngrok_api("http://localhost:4040/api/tunnels", NGROK_API_POLL_ATTEMPTS).await {
-        Some(url) => {
-            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_url = Some(url.clone());
-            let _ = app.emit("tunnel-url", url.clone());
-            let _ = app.emit("tunnel-status", "running");
-            Ok(url)
-        }
-        None => {
-            let _ = silent_cmd("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .output();
-            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = None;
-            Err("ngrok started but tunnel URL not available. Check your authtoken and try again.".to_string())
-        }
-    }
-}
-
-async fn start_zrok(
-    port: u16,
-    _config: Option<String>,
-    app: &tauri::AppHandle,
-    state: &SharedState,
-) -> Result<String, String> {
-    let zrok_bin = resolve_binary("zrok");
-    let target = format!("http://localhost:{}", port);
-
-    let (pid, state_url) = spawn_tunnel_process(
-        &zrok_bin,
-        &["share", "public", &target, "--headless"],
-        &[],
-        UrlSource::Stdout(r"https://[a-z0-9]+[.]share[.]zrok[.]io".to_string()),
-        app,
-    )?;
-
-    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = Some(pid);
-
-    match wait_for_url(&state_url, URL_INITIAL_WAIT_SECS, URL_RETRY_WAIT_SECS).await {
-        Some(url) => {
-            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_url = Some(url.clone());
-            Ok(url)
-        }
-        None => {
-            let _ = silent_cmd("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .output();
-            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = None;
-            Err("zrok started but URL not captured. Make sure you have run 'zrok enable' first.".to_string())
-        }
-    }
-}
-
-async fn start_pinggy(
-    port: u16,
-    config: Option<String>,
-    app: &tauri::AppHandle,
-    state: &SharedState,
-) -> Result<String, String> {
-    let port_str = format!("0:localhost:{}", port);
-
-    let mut args: Vec<&str> = vec![
-        "-p", "443",
-        "-R", &port_str,
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "ServerAliveInterval=30",
-    ];
-
-    // If a token is provided, pass it as the SSH user (token@a.pinggy.io)
-    let host = if let Some(ref token) = config {
-        if !token.trim().is_empty() {
-            format!("{}@a.pinggy.io", token.trim())
-        } else {
-            "a.pinggy.io".to_string()
-        }
-    } else {
-        "a.pinggy.io".to_string()
-    };
-    args.push(&host);
-
-    let (pid, state_url) = spawn_tunnel_process(
-        "ssh",
-        &args,
-        &[],
-        UrlSource::Stdout(r"https://[a-z0-9.-]+\.pinggy\.link".to_string()),
-        app,
-    )?;
-
-    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = Some(pid);
-
-    match wait_for_url(&state_url, PINGGY_INITIAL_WAIT_SECS, PINGGY_RETRY_WAIT_SECS).await {
-        Some(url) => {
-            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_url = Some(url.clone());
-            Ok(url)
-        }
-        None => {
-            let _ = silent_cmd("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .output();
-            state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_pid = None;
-            Err("Pinggy tunnel started but URL not captured. Please try again.".to_string())
-        }
-    }
-}
-
 // ── Tauri commands ──
 
 #[tauri::command]
 pub async fn start_tunnel(
     port: u16,
     provider: Option<String>,
-    config: Option<String>,
+    _config: Option<String>,
     app: tauri::AppHandle,
     state: State<'_, SharedState>,
 ) -> Result<String, String> {
@@ -405,13 +185,17 @@ pub async fn start_tunnel(
     let provider_enum = TunnelProvider::from_str_loose(&provider.unwrap_or_default());
 
     // Store provider in state
-    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_provider = provider_enum.clone();
+    state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .tunnel_provider = provider_enum.clone();
 
     match provider_enum {
         TunnelProvider::Cloudflared => start_cloudflared(port, &app, &state).await,
-        TunnelProvider::Ngrok => start_ngrok(port, config, &app, &state).await,
-        TunnelProvider::Zrok => start_zrok(port, config, &app, &state).await,
-        TunnelProvider::Pinggy => start_pinggy(port, config, &app, &state).await,
+        TunnelProvider::Manual => Err(
+            "Manual domains don't use a tunnel process. Use apply_manual_domain instead."
+                .to_string(),
+        ),
     }
 }
 
@@ -467,7 +251,7 @@ pub async fn reconnect_tunnel(
     port: u16,
     install_path: String,
     provider: Option<String>,
-    config: Option<String>,
+    _config: Option<String>,
     app: tauri::AppHandle,
     state: State<'_, SharedState>,
 ) -> Result<String, String> {
@@ -478,20 +262,23 @@ pub async fn reconnect_tunnel(
 
     let provider_enum = TunnelProvider::from_str_loose(&provider.unwrap_or_default());
 
-    state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_provider = provider_enum.clone();
+    state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .tunnel_provider = provider_enum.clone();
 
     // Start tunnel with the appropriate provider
     let url = match provider_enum {
         TunnelProvider::Cloudflared => start_cloudflared(port, &app, &state).await?,
-        TunnelProvider::Ngrok => start_ngrok(port, config, &app, &state).await?,
-        TunnelProvider::Zrok => start_zrok(port, config, &app, &state).await?,
-        TunnelProvider::Pinggy => start_pinggy(port, config, &app, &state).await?,
+        TunnelProvider::Manual => {
+            return Err("Manual domains don't use a tunnel process.".to_string())
+        }
     };
 
     // Update base URLs in postiz.env
     let env_path = std::path::PathBuf::from(&install_path).join("postiz.env");
-    let contents = std::fs::read_to_string(&env_path)
-        .map_err(|e| format!("Failed to read env: {}", e))?;
+    let contents =
+        std::fs::read_to_string(&env_path).map_err(|e| format!("Failed to read env: {}", e))?;
     // backup
     std::fs::copy(&env_path, env_path.with_extension("env.bak")).ok();
     let mut new_lines = Vec::new();
@@ -521,10 +308,8 @@ pub async fn reconnect_tunnel(
         result.push('\n');
     }
     let tmp = env_path.with_extension("env.tmp");
-    std::fs::write(&tmp, &result)
-        .map_err(|e| format!("Failed to write temp env: {}", e))?;
-    std::fs::rename(&tmp, &env_path)
-        .map_err(|e| format!("Failed to rename temp env: {}", e))?;
+    std::fs::write(&tmp, &result).map_err(|e| format!("Failed to write temp env: {}", e))?;
+    std::fs::rename(&tmp, &env_path).map_err(|e| format!("Failed to rename temp env: {}", e))?;
 
     // Restart Postiz
     let path = std::path::PathBuf::from(&install_path);

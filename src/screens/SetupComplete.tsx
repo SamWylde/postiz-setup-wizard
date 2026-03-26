@@ -46,8 +46,9 @@ export function SetupComplete() {
     if (credsLoaded.current) return;
     credsLoaded.current = true;
     getPostizCredentials().then(([email, password]) => {
-      if (email) { setCredEmail(email); setCredsSaved(true); }
-      if (password) setCredPassword(password);
+      setCredEmail(email ?? "");
+      setCredPassword(password ?? "");
+      setCredsSaved(Boolean(email && password));
     }).catch(() => {});
   }, []);
 
@@ -80,10 +81,19 @@ export function SetupComplete() {
   };
 
   const handleOpenPostiz = async () => {
+    const latestSnapshot = snapshot ?? await getInstallSnapshot().catch(() => null);
+    if (latestSnapshot && snapshot == null) {
+      setSnapshot(latestSnapshot);
+    }
+
     // Open the tunnel URL when active — Postiz sets session cookies based on
     // FRONTEND_URL's domain, so the browser must access via the same URL.
-    // Falls back to localhost when no tunnel is running.
-    const url = publicUrl ?? localUrl;
+    // Falls back to localhost when a Cloudflare tunnel is disconnected.
+    const url = latestSnapshot?.tunnel_alive && latestSnapshot.tunnel_url
+      ? latestSnapshot.tunnel_url
+      : latestSnapshot?.web_link_kind === "manual" && latestSnapshot.permanent_domain
+        ? latestSnapshot.permanent_domain
+        : localUrl;
     try {
       await open(url);
     } catch (err) {
@@ -108,10 +118,24 @@ export function SetupComplete() {
     }
   };
 
-  const allGood =
-    snapshot !== null &&
-    snapshot.all_healthy &&
-    snapshot.postiz_responding;
+  const webLinkNeedsAttention =
+    snapshot?.web_link_kind === "cloudflare" && !snapshot.tunnel_alive;
+  const overallStatus =
+    snapshot == null
+      ? "loading"
+      : !snapshot.all_healthy || !snapshot.postiz_responding
+        ? "error"
+        : webLinkNeedsAttention
+          ? "warning"
+          : "success";
+  const publicUrlLabel =
+    snapshot?.tunnel_alive
+      ? "Public URL"
+      : snapshot?.web_link_kind === "manual"
+        ? "Custom Domain"
+        : tunnelMode === "permanent"
+          ? "Configured public URL"
+          : "Public URL";
 
   return (
     <div className="max-w-2xl">
@@ -167,8 +191,10 @@ export function SetupComplete() {
                 status={
                   snapshot.tunnel_alive
                     ? "success"
-                    : tunnelMode === "permanent" && permanentDomain
+                    : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
                       ? "success"
+                      : snapshot.web_link_kind === "cloudflare"
+                        ? "warning"
                       : configuredProviders.length > 0
                         ? "success"
                         : "warning"
@@ -177,26 +203,44 @@ export function SetupComplete() {
                 detail={
                   snapshot.tunnel_alive
                     ? snapshot.tunnel_url ?? "Active"
-                    : tunnelMode === "permanent" && permanentDomain
-                      ? `Custom domain: ${permanentDomain}`
+                    : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
+                      ? `Custom domain: ${snapshot.permanent_domain}`
+                      : snapshot.web_link_kind === "cloudflare"
+                        ? snapshot.permanent_domain
+                          ? `Cloudflare tunnel disconnected (${snapshot.permanent_domain})`
+                          : "Cloudflare tunnel disconnected"
                       : configuredProviders.length > 0
                         ? "Not needed — accounts use saved tokens"
                         : "Not connected"
                 }
               />
             )}
+            <Button
+              variant="ghost"
+              className="mt-2"
+              onClick={() => setStep(3)}
+            >
+              Manage Web Link
+            </Button>
             <div className="pt-2 mt-2 border-t border-gray-100">
               <StatusIndicator
-                status={allGood ? "success" : "error"}
+                status={overallStatus}
                 label="Overall"
                 detail={
-                  allGood
+                  overallStatus === "success"
                     ? "Everything is working!"
-                    : "Some issues need attention"
+                    : overallStatus === "warning"
+                      ? "Working locally, but your public web link needs attention"
+                      : "Some issues need attention"
                 }
               />
             </div>
-            {!allGood && (
+            {overallStatus === "warning" && (
+              <p className="pt-3 text-xs text-amber-700">
+                Reconnect or change your public web link before adding or reconnecting social accounts.
+              </p>
+            )}
+            {overallStatus === "error" && (
               <div className="flex items-center gap-2 pt-3">
                 <Button
                   variant="secondary"
@@ -240,7 +284,7 @@ export function SetupComplete() {
         </h3>
         <div className="space-y-3">
           {publicUrl && (
-            <CopyField value={publicUrl} label="Public URL" />
+            <CopyField value={publicUrl} label={publicUrlLabel} />
           )}
           <CopyField value={localUrl} label="Local URL" />
           <div>
@@ -282,8 +326,8 @@ export function SetupComplete() {
           </p>
           <ol className="space-y-2 text-sm text-amber-800 list-decimal list-inside">
             <li>
-              Click <strong>"Open Postiz"</strong> below and create your account
-              (or log in)
+              Click <strong>"Open Postiz"</strong> below and sign in with the
+              account you already created
             </li>
             <li>
               Go to <strong>Settings</strong> (gear icon) then look for <strong>Channels</strong> or <strong>Integrations</strong>
@@ -314,7 +358,7 @@ export function SetupComplete() {
         {credsSaved ? (
           <div className="space-y-3">
             <CopyField value={credEmail} label="Email" />
-            <CopyField value={credPassword} label="Password" />
+            <CopyField value={credPassword} label="Password" secret />
             <button
               onClick={() => setCredsSaved(false)}
               className="text-xs text-blue-600 hover:text-blue-700"
@@ -325,8 +369,9 @@ export function SetupComplete() {
         ) : (
           <div className="space-y-3">
             <p className="text-sm text-gray-600">
-              Save your Postiz login here so you can easily copy it later
-              (e.g. when the URL changes).
+              Save your Postiz login here so you can easily copy it later,
+              for example if your web link changes. It's stored encrypted on
+              this computer.
             </p>
             <input
               type="email"
@@ -336,7 +381,7 @@ export function SetupComplete() {
               onChange={(e) => setCredEmail(e.target.value)}
             />
             <input
-              type="text"
+              type="password"
               className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
               placeholder="Password"
               value={credPassword}
@@ -349,7 +394,7 @@ export function SetupComplete() {
                 await savePostizCredentials(credEmail.trim(), credPassword.trim());
                 await saveResumeState();
                 setCredsSaved(true);
-                showToast("Credentials saved locally", "success");
+                showToast("Credentials saved securely on this computer", "success");
               }}
             >
               Save Credentials

@@ -1,13 +1,47 @@
 mod commands;
 mod state;
 
-use state::SharedState;
+use state::{SharedState, TunnelProvider};
 use std::sync::Mutex;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
     Emitter, Manager,
 };
+
+fn preferred_public_web_link(state: &SharedState) -> Option<String> {
+    let s = state.lock().unwrap_or_else(|e| e.into_inner());
+    let tunnel_alive = s
+        .tunnel_pid
+        .map(commands::tunnel::is_pid_alive)
+        .unwrap_or(false);
+
+    if s.tunnel_mode == "permanent" && s.tunnel_provider == TunnelProvider::Manual {
+        return s.permanent_domain.clone();
+    }
+
+    if tunnel_alive {
+        return s.tunnel_url.clone().or_else(|| {
+            if s.tunnel_mode == "permanent" {
+                s.permanent_domain.clone()
+            } else {
+                None
+            }
+        });
+    }
+
+    None
+}
+
+fn preferred_open_url(state: &SharedState) -> Option<String> {
+    preferred_public_web_link(state).or_else(|| {
+        state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .local_url
+            .clone()
+    })
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -67,34 +101,14 @@ pub fn run() {
                     match event.id.as_ref() {
                         "open_postiz" => {
                             let state: tauri::State<SharedState> = app.state();
-                            let url = {
-                                let s = state.lock().unwrap_or_else(|e| e.into_inner());
-                                s.tunnel_url.clone()
-                                    .or_else(|| {
-                                        if s.tunnel_mode == "permanent" {
-                                            s.permanent_domain.clone()
-                                        } else {
-                                            None
-                                        }
-                                    })
-                                    .or_else(|| s.local_url.clone())
-                            };
+                            let url = preferred_open_url(&state);
                             if let Some(url) = url {
                                 let _ = open::that(url);
                             }
                         }
                         "copy_link" => {
                             let state: tauri::State<SharedState> = app.state();
-                            let url = {
-                                let s = state.lock().unwrap_or_else(|e| e.into_inner());
-                                s.tunnel_url.clone().or_else(|| {
-                                    if s.tunnel_mode == "permanent" {
-                                        s.permanent_domain.clone()
-                                    } else {
-                                        None
-                                    }
-                                })
-                            };
+                            let url = preferred_public_web_link(&state);
                             if let Some(url) = url {
                                 let _ = app.emit("copy-to-clipboard", url.clone());
                                 // Show notification feedback
@@ -104,6 +118,14 @@ pub fn run() {
                                     .builder()
                                     .title("Web link copied")
                                     .body(&url)
+                                    .show();
+                            } else {
+                                use tauri_plugin_notification::NotificationExt;
+                                let _ = app
+                                    .notification()
+                                    .builder()
+                                    .title("No public web link")
+                                    .body("Cloudflare is disconnected. Open Postiz locally or reconnect the web link first.")
                                     .show();
                             }
                         }
@@ -264,6 +286,10 @@ pub fn run() {
             commands::resume::clear_transfer_review_and_save,
             commands::upgrade::check_postiz_update,
             commands::upgrade::upgrade_postiz,
+            commands::web_link::apply_manual_domain,
+            commands::web_link::switch_to_local_only,
+            commands::web_link::connect_cloudflare_zero_trust,
+            commands::web_link::verify_public_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

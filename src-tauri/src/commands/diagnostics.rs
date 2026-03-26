@@ -4,10 +4,16 @@ use super::silent_cmd;
 use crate::state::SharedState;
 
 #[tauri::command]
-pub async fn export_diagnostics(
-    state: State<'_, SharedState>,
-) -> Result<String, String> {
-    let (install_path, port, tunnel_mode, tunnel_url, providers_configured, providers_stale, current_step) = {
+pub async fn export_diagnostics(state: State<'_, SharedState>) -> Result<String, String> {
+    let (
+        install_path,
+        port,
+        tunnel_mode,
+        tunnel_url,
+        providers_configured,
+        providers_stale,
+        current_step,
+    ) = {
         let s = state.lock().unwrap_or_else(|e| e.into_inner());
         (
             s.install_path.clone(),
@@ -43,8 +49,14 @@ pub async fn export_diagnostics(
         tunnel_url.as_deref().unwrap_or("(none)")
     ));
     report.push_str(&format!("Current step: {}\n", current_step));
-    report.push_str(&format!("Providers configured: {}\n", providers_configured.join(", ")));
-    report.push_str(&format!("Providers stale: {}\n\n", providers_stale.join(", ")));
+    report.push_str(&format!(
+        "Providers configured: {}\n",
+        providers_configured.join(", ")
+    ));
+    report.push_str(&format!(
+        "Providers stale: {}\n\n",
+        providers_stale.join(", ")
+    ));
 
     // Docker version
     report.push_str("--- Docker Version ---\n");
@@ -139,7 +151,8 @@ pub async fn export_diagnostics(
                             value.contains("://") && value.contains('@') && {
                                 if let Some(proto_end) = value.find("://") {
                                     let after_proto = &value[proto_end + 3..];
-                                    after_proto.contains(':') && after_proto.contains('@')
+                                    after_proto.contains(':')
+                                        && after_proto.contains('@')
                                         && after_proto.find(':') < after_proto.find('@')
                                 } else {
                                     false
@@ -151,9 +164,8 @@ pub async fn export_diagnostics(
 
                         if has_secret || has_embedded_creds {
                             // Only include if it's a known safe prefix
-                            let is_safe = !has_embedded_creds && safe_prefixes
-                                .iter()
-                                .any(|prefix| upper.starts_with(prefix));
+                            let is_safe = !has_embedded_creds
+                                && safe_prefixes.iter().any(|prefix| upper.starts_with(prefix));
                             if is_safe {
                                 report.push_str(trimmed);
                                 report.push('\n');

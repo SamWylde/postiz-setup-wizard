@@ -1,19 +1,17 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useWizardStore } from "../store/wizardStore";
 import {
-  startTunnel,
+  applyManualDomain,
+  connectCloudflareZeroTrust,
+  switchToLocalOnly,
   stopTunnel,
-  updateBaseUrls,
-  restartAndVerify,
   cancelDockerOperation,
   saveResumeState,
-  syncTunnelConfig,
   runBootstrap,
   scanMachine,
-  onTunnelUrl,
-  onTunnelStatus,
-  type TunnelProvider,
+  getInstallSnapshot,
   type BootstrapAction,
+  type InstallSnapshot,
 } from "../lib/tauri";
 import { friendlyError } from "../lib/errors";
 import { showToast } from "../components/ui/Toast";
@@ -24,29 +22,21 @@ import { CopyField } from "../components/ui/CopyField";
 import { StatusIndicator } from "../components/ui/StatusIndicator";
 import { NavigationButtons } from "../components/wizard/NavigationButtons";
 import { open } from "@tauri-apps/plugin-shell";
-import { AlertTriangle, Globe, Link, Monitor, ChevronDown, Download } from "lucide-react";
+import {
+  AlertTriangle,
+  Globe,
+  Monitor,
+  Shield,
+  Download,
+  RefreshCw,
+} from "lucide-react";
 
-type TunnelMode = "temporary" | "permanent" | "none";
-
-interface ProviderOption {
-  id: TunnelProvider;
-  name: string;
-  description: string;
-  installed: boolean;
-  installAction: BootstrapAction | null;
-}
-
-// ── Magic-number timeouts extracted as named constants ──────────────
-const TUNNEL_VERIFY_DELAY_MS = 10_000;
-const REMOTE_FETCH_TIMEOUT_MS = 10_000;
-const DOMAIN_FETCH_TIMEOUT_MS = 10_000;
-const TUNNEL_START_TIMEOUT_MS = 90_000;
+type LinkMethod = "custom-domain" | "cloudflare-zt" | "local-only" | null;
 
 export function CreateWebLink() {
   const {
     port,
     installPath,
-    tunnelStatus,
     setTunnelStatus,
     tunnelUrl,
     setTunnelUrl,
@@ -58,39 +48,34 @@ export function CreateWebLink() {
     setTunnelConfig,
     permanentDomain,
     setPermanentDomain,
-    setRemoteReachable,
     setStep,
     machineState,
     setMachineState,
     providers,
     setProviderStatus,
   } = useWizardStore();
+
   const [statusMessage, setStatusMessage] = useState("");
-  const [domainApplied, setDomainApplied] = useState(false);
-  const [domainReachable, setDomainReachable] = useState(true);
-  const [applyingDomain, setApplyingDomain] = useState(false);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [installing, setInstalling] = useState<string | null>(null);
+  const [selectedMethod, setSelectedMethod] = useState<LinkMethod>(null);
+  const [applying, setApplying] = useState(false);
+  const [installing, setInstalling] = useState(false);
   const [switchingLocal, setSwitchingLocal] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [showCaddy, setShowCaddy] = useState(true);
+  const [unreachableUrl, setUnreachableUrl] = useState<string | null>(null);
+  const [editingActiveLink, setEditingActiveLink] = useState(false);
+
+  const [linkSnapshot, setLinkSnapshot] = useState<InstallSnapshot | null>(null);
+  const [webLinkKind, setWebLinkKind] = useState<string | null>(null);
+
   const mountedRef = useRef(true);
-  const tunnelStartTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Operation generation counters — incremented on cancel to invalidate stale completions
-  const tunnelOpRef = useRef(0);
-  const domainOpRef = useRef(0);
-  const localOpRef = useRef(0);
+  const opRef = useRef(0);
 
   useEffect(() => {
-    return () => {
-      mountedRef.current = false;
-      if (tunnelStartTimeoutRef.current) {
-        clearTimeout(tunnelStartTimeoutRef.current);
-      }
-    };
+    return () => { mountedRef.current = false; };
   }, []);
 
-  // Rescan machine state on mount so provider availability is up to date
-  // (e.g. after resume or recovery when machineState may be null)
+  // Rescan machine state on mount
   useEffect(() => {
     if (!machineState) {
       scanMachine()
@@ -99,63 +84,90 @@ export function CreateWebLink() {
     }
   }, []);
 
-  useEffect(() => {
-    const unlistenUrl = onTunnelUrl((e) => {
-      setTunnelUrl(e.payload);
-    });
-    const unlistenStatus = onTunnelStatus((e) => {
-      if (e.payload === "running") setTunnelStatus("running");
-      if (e.payload === "stopped") setTunnelStatus("error");
-    });
-
-    return () => {
-      unlistenUrl.then((f) => f()).catch(() => {});
-      unlistenStatus.then((f) => f()).catch(() => {});
-    };
+  const refreshLinkSnapshot = useCallback(async () => {
+    const snap = await getInstallSnapshot();
+    if (!mountedRef.current) return snap;
+    setLinkSnapshot(snap);
+    setWebLinkKind(snap.web_link_kind);
+    return snap;
   }, []);
 
-  const providerOptions: ProviderOption[] = [
-    {
-      id: "cloudflared",
-      name: "Cloudflare",
-      description: "No account needed. URL changes on restart.",
-      installed: machineState?.cloudflared_installed ?? false,
-      installAction: "InstallCloudflared",
-    },
-    {
-      id: "ngrok",
-      name: "ngrok",
-      description: "Free account for static URLs.",
-      installed: machineState?.ngrok_installed ?? false,
-      installAction: "InstallNgrok",
-    },
-    {
-      id: "zrok",
-      name: "zrok",
-      description: "Open-source. Free stable URLs.",
-      installed: machineState?.zrok_installed ?? false,
-      installAction: "InstallZrok",
-    },
-    {
-      id: "pinggy",
-      name: "Pinggy",
-      description: "No install needed (uses SSH).",
-      installed: machineState?.ssh_available ?? false,
-      installAction: null,
-    },
-  ];
+  useEffect(() => {
+    refreshLinkSnapshot().catch(() => {});
+  }, [refreshLinkSnapshot, tunnelMode, tunnelProvider]);
 
-  const selectedProvider = providerOptions.find((p) => p.id === tunnelProvider);
+  const cloudflaredInstalled = machineState?.cloudflared_installed ?? false;
 
-  const handleInstallProvider = async (opt: ProviderOption) => {
-    if (!opt.installAction) return;
-    setInstalling(opt.id);
+  const configuredProviders = Object.entries(providers).filter(
+    ([, status]) => status === "configured",
+  );
+
+  const fallbackLinkKind =
+    tunnelMode === "none"
+      ? "none"
+      : tunnelMode === "permanent"
+        ? tunnelProvider === "manual"
+          ? "manual"
+          : "cloudflare"
+        : null;
+  const effectiveLinkKind = linkSnapshot?.web_link_kind ?? webLinkKind ?? fallbackLinkKind;
+  const activeLinkUrl =
+    (linkSnapshot?.tunnel_alive && linkSnapshot.tunnel_url) ||
+    linkSnapshot?.permanent_domain ||
+    tunnelUrl ||
+    permanentDomain ||
+    null;
+  const hasConfiguredLink =
+    effectiveLinkKind === "manual" ||
+    effectiveLinkKind === "cloudflare" ||
+    effectiveLinkKind === "legacy_shared";
+  const hasUsableLink =
+    tunnelMode === "none" ||
+    (effectiveLinkKind === "manual" && !!activeLinkUrl) ||
+    (effectiveLinkKind === "cloudflare" && Boolean(linkSnapshot?.tunnel_alive));
+  const cloudflareLinkDisconnected =
+    effectiveLinkKind === "cloudflare" &&
+    linkSnapshot !== null &&
+    !linkSnapshot.tunnel_alive;
+  const showingMethodSelection =
+    (editingActiveLink || !hasConfiguredLink || effectiveLinkKind === "legacy_shared") &&
+    !applying &&
+    !switchingLocal;
+
+  const activeLinkStatus =
+    effectiveLinkKind === "cloudflare"
+      ? linkSnapshot === null
+        ? "loading"
+        : linkSnapshot.tunnel_alive
+          ? "success"
+          : "warning"
+      : "success";
+  const activeLinkLabel =
+    effectiveLinkKind === "cloudflare"
+      ? linkSnapshot === null
+        ? "Checking current web link..."
+        : linkSnapshot.tunnel_alive
+          ? "Web link is active"
+          : "Web link is configured but disconnected"
+      : "Web link is active";
+  const activeLinkDetail =
+    effectiveLinkKind === "cloudflare"
+      ? linkSnapshot === null
+        ? "Checking whether the Cloudflare tunnel is connected."
+        : linkSnapshot.tunnel_alive
+          ? "Cloudflare Zero Trust is connected."
+          : "Reconnect or change it before connecting social accounts."
+      : effectiveLinkKind === "manual"
+        ? "Your custom domain is configured."
+        : undefined;
+
+  const handleInstallCloudflared = async () => {
+    setInstalling(true);
     try {
-      await runBootstrap(opt.installAction);
+      await runBootstrap("InstallCloudflared" as BootstrapAction);
     } catch (err) {
       showToast(friendlyError(String(err)), "error");
     }
-    // Re-scan machine state so the freshly installed provider shows as available
     try {
       const state = await scanMachine();
       setMachineState(state);
@@ -163,235 +175,176 @@ export function CreateWebLink() {
     } catch (err) {
       showToast(friendlyError(String(err)), "error");
     }
-    setInstalling(null);
+    setInstalling(false);
   };
 
-  const handleCancelTunnel = () => {
-    if (tunnelStartTimeoutRef.current) {
-      clearTimeout(tunnelStartTimeoutRef.current);
-      tunnelStartTimeoutRef.current = null;
-    }
-    stopTunnel().catch(() => {});
-    setTunnelStatus("idle");
-    setStatusMessage("Tunnel start cancelled.");
-  };
+  // ── Custom Domain ──────────────────────────────────────────────────
 
-  const handleStartTunnel = async () => {
-    const opId = ++tunnelOpRef.current;
-
-    // Ensure tunnel settings (including token) are persisted before starting
-    await syncTunnelConfig("temporary", permanentDomain || null, tunnelProvider, tunnelConfig || null);
-    await saveResumeState();
-
-    setTunnelMode("temporary");
-    setTunnelStatus("starting");
-    setStatusMessage("Starting secure tunnel...");
-
-    // Auto-timeout: if the tunnel hasn't progressed past "starting" in time, error out
-    if (tunnelStartTimeoutRef.current) clearTimeout(tunnelStartTimeoutRef.current);
-    tunnelStartTimeoutRef.current = setTimeout(() => {
-      if (!mountedRef.current || tunnelOpRef.current !== opId) return;
-      const current = useWizardStore.getState().tunnelStatus;
-      if (current === "starting") {
-        setTunnelStatus("error");
-        setStatusMessage("Tunnel start timed out. Try again or choose a different provider.");
-      }
-    }, TUNNEL_START_TIMEOUT_MS);
-
-    try {
-      const config = tunnelConfig.trim() || undefined;
-      const url = await startTunnel(port, tunnelProvider, config);
-      if (!mountedRef.current || tunnelOpRef.current !== opId) return;
-      // Clear the start timeout — tunnel has progressed past "starting"
-      if (tunnelStartTimeoutRef.current) {
-        clearTimeout(tunnelStartTimeoutRef.current);
-        tunnelStartTimeoutRef.current = null;
-      }
-      setTunnelUrl(url);
-      setTunnelStatus("restarting");
-      setStatusMessage("Updating Postiz configuration...");
-
-      await updateBaseUrls(installPath, url);
-      await restartAndVerify(installPath);
-      if (!mountedRef.current || tunnelOpRef.current !== opId) return;
-
-      setStatusMessage("Verifying remote access...");
-
-      await new Promise((r) => setTimeout(r, TUNNEL_VERIFY_DELAY_MS));
-      if (!mountedRef.current || tunnelOpRef.current !== opId) return;
-
-      try {
-        await fetch(url, {
-          mode: "no-cors",
-          signal: AbortSignal.timeout(REMOTE_FETCH_TIMEOUT_MS),
-        });
-        if (!mountedRef.current || tunnelOpRef.current !== opId) return;
-        setRemoteReachable(true);
-        setTunnelStatus("running");
-        setStatusMessage("Web link is active!");
-      } catch {
-        if (!mountedRef.current || tunnelOpRef.current !== opId) return;
-        setRemoteReachable(false);
-        setTunnelStatus("running");
-        setStatusMessage(
-          "Web link created but remote verification failed. The link may still work — social platforms will connect directly.",
-        );
-      }
-    } catch (err) {
-      if (tunnelStartTimeoutRef.current) {
-        clearTimeout(tunnelStartTimeoutRef.current);
-        tunnelStartTimeoutRef.current = null;
-      }
-      if (!mountedRef.current || tunnelOpRef.current !== opId) return;
-      setTunnelStatus("error");
-      setStatusMessage(friendlyError(String(err)));
-    }
-  };
-
-  const handleApplyDomain = async () => {
+  const handleApplyCustomDomain = async (force = false) => {
     const raw = permanentDomain.trim();
     if (!raw) return;
 
-    // Validate URL format
     const domain = raw.replace(/\/+$/, "");
     if (!domain.startsWith("https://")) {
       setStatusMessage("Domain must start with https:// — social platforms require HTTPS.");
       return;
     }
+
     try {
-      const parsed = new URL(domain);
-      const hostname = parsed.hostname;
-
-      if (!hostname.includes(".")) {
-        setStatusMessage("Please enter a valid domain (e.g. https://postiz.example.com).");
-        return;
-      }
-
-      // Reject IP addresses (all parts between dots are numeric)
-      const parts = hostname.split(".");
-      const looksLikeIp = parts.every((p) => /^\d+$/.test(p));
-      if (looksLikeIp) {
-        setStatusMessage("Please use a domain name, not an IP address.");
-        return;
-      }
-
-      // Reject trailing dots (e.g. "example.com.")
-      if (hostname.endsWith(".")) {
-        setStatusMessage("Domain must not end with a trailing dot.");
-        return;
-      }
-
-      // Reject double dots (e.g. "example..com")
-      if (hostname.includes("..")) {
-        setStatusMessage("Domain contains consecutive dots — please check for typos.");
-        return;
-      }
-
-      // Require at least a 2-character TLD
-      const tld = parts[parts.length - 1];
-      if (tld.length < 2) {
-        setStatusMessage("Domain must have a valid TLD (at least 2 characters).");
-        return;
-      }
+      new URL(domain);
     } catch {
       setStatusMessage("Invalid URL format. Enter a full URL like https://postiz.example.com");
       return;
     }
 
-    const opId = ++domainOpRef.current;
-    setApplyingDomain(true);
+    const opId = ++opRef.current;
+    setApplying(true);
     setStatusMessage("Applying domain configuration...");
+    setUnreachableUrl(null);
 
     try {
-      await updateBaseUrls(installPath, domain);
-      await restartAndVerify(installPath);
-      if (domainOpRef.current !== opId) return;
-      await saveResumeState();
+      await applyManualDomain(installPath, domain, force);
+      if (!mountedRef.current || opRef.current !== opId) return;
 
-      setTunnelUrl(domain);
+      setPermanentDomain(domain);
+      setTunnelUrl(null);
+      setTunnelMode("permanent");
+      setTunnelProvider("manual");
+      setTunnelConfig("");
       setTunnelStatus("running");
-
-      // Verify the public URL is actually reachable via HTTPS
-      setStatusMessage("Verifying public URL...");
-      let reachable = false;
-      try {
-        await fetch(domain, {
-          mode: "no-cors",
-          signal: AbortSignal.timeout(DOMAIN_FETCH_TIMEOUT_MS),
-        });
-        if (domainOpRef.current !== opId) return;
-        reachable = true;
-        setStatusMessage("Domain applied and verified!");
-      } catch {
-        if (domainOpRef.current !== opId) return;
-        setStatusMessage(
-          "Domain applied, but could not reach it publicly. Verify DNS and HTTPS are configured correctly — social platform callbacks may not work until this is resolved.",
-        );
-      }
-      setDomainReachable(reachable);
-      setDomainApplied(true);
+      setStatusMessage("Domain applied successfully!");
+      setEditingActiveLink(false);
+      setSelectedMethod(null);
+      setUnreachableUrl(null);
+      await saveResumeState();
+      await refreshLinkSnapshot().catch(() => {});
     } catch (err) {
-      if (domainOpRef.current !== opId) return;
-      setStatusMessage(friendlyError(String(err)));
+      if (!mountedRef.current || opRef.current !== opId) return;
+      const errStr = String(err);
+      if (errStr.startsWith("UNREACHABLE:")) {
+        setUnreachableUrl(domain);
+        setStatusMessage(
+          `Could not reach ${domain}. Make sure your reverse proxy is running and DNS is configured.`,
+        );
+      } else {
+        setStatusMessage(friendlyError(errStr));
+      }
     } finally {
-      if (domainOpRef.current === opId) setApplyingDomain(false);
+      if (mountedRef.current && opRef.current === opId) setApplying(false);
     }
   };
 
-  const configuredProviders = Object.entries(providers).filter(
-    ([, status]) => status === "configured",
-  );
+  // ── Cloudflare Zero Trust ──────────────────────────────────────────
+
+  const handleConnectZeroTrust = async () => {
+    const url = permanentDomain.trim().replace(/\/+$/, "");
+    const token = tunnelConfig.trim();
+
+    if (!url || !token) {
+      setStatusMessage("Both the public URL and tunnel token are required.");
+      return;
+    }
+    if (!url.startsWith("https://")) {
+      setStatusMessage("URL must start with https://");
+      return;
+    }
+    try {
+      new URL(url);
+    } catch {
+      setStatusMessage("Invalid URL format. Enter a full URL like https://postiz.example.com");
+      return;
+    }
+
+    const opId = ++opRef.current;
+    setApplying(true);
+    setStatusMessage("Connecting Cloudflare tunnel...");
+    setUnreachableUrl(null);
+
+    try {
+      await connectCloudflareZeroTrust(installPath, port, url, token);
+      if (!mountedRef.current || opRef.current !== opId) return;
+
+      setPermanentDomain(url);
+      setTunnelUrl(url);
+      setTunnelMode("permanent");
+      setTunnelProvider("cloudflared");
+      setTunnelConfig(token);
+      setTunnelStatus("running");
+      setStatusMessage("Cloudflare tunnel connected!");
+      setEditingActiveLink(false);
+      setSelectedMethod(null);
+      await saveResumeState();
+      await refreshLinkSnapshot().catch(() => {});
+    } catch (err) {
+      if (!mountedRef.current || opRef.current !== opId) return;
+      setStatusMessage(friendlyError(String(err)));
+    } finally {
+      if (mountedRef.current && opRef.current === opId) setApplying(false);
+    }
+  };
+
+  // ── Local Only ─────────────────────────────────────────────────────
 
   const handleChooseLocalOnly = async () => {
-    const opId = ++localOpRef.current;
+    const opId = ++opRef.current;
     setSwitchingLocal(true);
     setStatusMessage("Switching to local-only mode...");
 
     try {
-      // Rewrite env file to use localhost URLs
-      await updateBaseUrls(installPath, `http://localhost:${port}`);
+      const previousMainUrl = await switchToLocalOnly(installPath, port);
+      if (!mountedRef.current || opRef.current !== opId) return;
 
-      // Kill any running tunnel process
-      try {
-        await stopTunnel();
-      } catch {
-        // Tunnel may not be running — that's fine
-      }
-
-      // Restart Docker with the new env
-      setStatusMessage("Restarting Postiz with local configuration...");
-      await restartAndVerify(installPath);
-      if (!mountedRef.current || localOpRef.current !== opId) return;
-
-      // Mark configured providers as stale since localhost won't work for OAuth
-      if (configuredProviders.length > 0) {
+      // Only mark providers stale if hostname actually changed
+      const hadPublicUrl =
+        previousMainUrl && !previousMainUrl.includes("localhost");
+      if (hadPublicUrl && configuredProviders.length > 0) {
         for (const [providerName] of configuredProviders) {
           setProviderStatus(providerName, "stale");
         }
       }
 
       setTunnelMode("none");
+      setTunnelProvider("manual");
+      setPermanentDomain("");
+      setTunnelConfig("");
       setTunnelUrl(null);
       setTunnelStatus("idle");
       setStatusMessage("");
-
+      setEditingActiveLink(false);
+      setSelectedMethod(null);
+      setUnreachableUrl(null);
       await saveResumeState();
+      await refreshLinkSnapshot().catch(() => {});
     } catch (err) {
-      if (!mountedRef.current || localOpRef.current !== opId) return;
+      if (!mountedRef.current || opRef.current !== opId) return;
       setStatusMessage(friendlyError(String(err)));
     } finally {
-      if (mountedRef.current && localOpRef.current === opId) {
+      if (mountedRef.current && opRef.current === opId) {
         setSwitchingLocal(false);
       }
     }
   };
 
-  const isActive = tunnelStatus === "running" && tunnelUrl;
+  // ── Change Web Link ────────────────────────────────────────────────
+
+  const handleChangeLink = () => {
+    setEditingActiveLink(true);
+    setStatusMessage("");
+    setSelectedMethod(null);
+    setUnreachableUrl(null);
+  };
+
+  const handleSelectMethod = (method: LinkMethod) => {
+    setSelectedMethod((current) => (current === method ? null : method));
+    setStatusMessage("");
+    setUnreachableUrl(null);
+  };
 
   const canProceed =
-    tunnelMode === "none" ||
-    (tunnelMode === "permanent" && domainApplied) ||
-    (tunnelMode === "temporary" && !!isActive);
+    !editingActiveLink &&
+    hasUsableLink;
+
+  // ── Render ─────────────────────────────────────────────────────────
 
   return (
     <div className="max-w-2xl">
@@ -400,7 +353,7 @@ export function CreateWebLink() {
       </h2>
       <p className="text-gray-600 mb-6">
         Social media platforms need a public URL to communicate with Postiz.
-        Choose a tunnel provider and we'll create one automatically.
+        Choose how you'd like to make Postiz accessible.
       </p>
 
       {/* Scan error banner */}
@@ -422,201 +375,479 @@ export function CreateWebLink() {
         </div>
       )}
 
-      {/* Provider selector + primary action */}
-      {tunnelStatus === "idle" && tunnelMode !== "permanent" && tunnelMode !== "none" && (
-        <>
-          <Card className="mb-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Globe className="h-4 w-4 text-blue-600" />
-              <h3 className="text-sm font-medium text-gray-900">
-                Choose a tunnel provider
-              </h3>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              {providerOptions.map((opt) => (
-                <button
-                  key={opt.id}
-                  onClick={() => {
-                    if (opt.installed && opt.id !== tunnelProvider) {
-                      setTunnelProvider(opt.id);
-                      setTunnelConfig("");
-                    }
-                  }}
-                  disabled={!opt.installed && installing !== null}
-                  className={`relative text-left rounded-lg border-2 p-3 transition-colors ${
-                    tunnelProvider === opt.id
-                      ? "border-blue-500 bg-blue-50"
-                      : opt.installed
-                        ? "border-gray-200 hover:border-gray-300 bg-white"
-                        : "border-gray-100 bg-gray-50 opacity-75"
-                  }`}
-                >
-                  <p className="text-sm font-medium text-gray-900">{opt.name}</p>
-                  <p className="text-xs text-gray-500 mt-0.5">{opt.description}</p>
-                  {!opt.installed && opt.installAction && (
-                    <Button
-                      variant="secondary"
-                      className="mt-2 text-xs"
-                      loading={installing === opt.id}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleInstallProvider(opt);
-                      }}
-                    >
-                      <Download className="h-3 w-3" />
-                      Install
-                    </Button>
-                  )}
-                </button>
-              ))}
-            </div>
-          </Card>
-
-          {/* Per-provider config inputs */}
-          {tunnelProvider === "ngrok" && (
-            <Card className="mb-4">
-              <Input
-                label="ngrok authtoken (optional)"
-                value={tunnelConfig}
-                onChange={(e) => setTunnelConfig(e.target.value)}
-                placeholder="Paste your ngrok authtoken for a stable URL"
-                secret
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Get a free authtoken at{" "}
-                <button onClick={() => open("https://ngrok.com/signup")} className="text-blue-600 hover:text-blue-700 underline">
-                  ngrok.com/signup
-                </button>
-              </p>
-            </Card>
-          )}
-          {tunnelProvider === "zrok" && (
-            <Card className="mb-4">
-              <p className="text-sm text-gray-700 mb-2">
-                <strong>First time using zrok?</strong> You need to create a free account
-                and enable your environment before sharing:
-              </p>
-              <ol className="text-sm text-gray-600 list-decimal list-inside space-y-1 mb-3">
-                <li>Sign up at <button onClick={() => open("https://zrok.io")} className="font-mono text-blue-600 hover:text-blue-700 underline">zrok.io</button> and copy your enable token</li>
-                <li>Open a terminal and run: <code className="bg-gray-100 px-1 py-0.5 rounded text-xs">zrok enable YOUR_TOKEN</code></li>
-              </ol>
-              <p className="text-xs text-gray-500">
-                You only need to do this once. After enabling, zrok will remember your account.
-              </p>
-            </Card>
-          )}
-          {tunnelProvider === "pinggy" && (
-            <Card className="mb-4">
-              <Input
-                label="Pinggy token (optional)"
-                value={tunnelConfig}
-                onChange={(e) => setTunnelConfig(e.target.value)}
-                placeholder="Paste your Pinggy token for a stable URL"
-                secret
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                Get a token at{" "}
-                <button onClick={() => open("https://pinggy.io")} className="text-blue-600 hover:text-blue-700 underline">
-                  pinggy.io
-                </button>{" "}
-                for a persistent URL
-              </p>
-            </Card>
-          )}
-
-          {/* Start button */}
-          <Card className="mb-6">
-            <Button
-              onClick={handleStartTunnel}
-              disabled={!selectedProvider?.installed}
-            >
-              <Globe className="h-4 w-4" />
-              Create Web Link
-              {selectedProvider && ` with ${selectedProvider.name}`}
-            </Button>
-          </Card>
-        </>
-      )}
-
-      {/* Tunnel in progress / active */}
-      {tunnelMode === "temporary" && tunnelStatus !== "idle" && (
-        <Card className="mb-6">
-          <div className="space-y-4">
-            <StatusIndicator
-              status={
-                isActive
-                  ? "success"
-                  : tunnelStatus === "error"
-                    ? "error"
-                    : "loading"
-              }
-              label={statusMessage}
-            />
-
-            {tunnelStatus === "starting" && (
-              <Button variant="secondary" onClick={handleCancelTunnel}>
-                Cancel
-              </Button>
-            )}
-
-            {tunnelStatus === "restarting" && (
-              <Button
-                variant="secondary"
-                onClick={async () => {
-                  tunnelOpRef.current++;
-                  try { await cancelDockerOperation(); } catch {}
-                  // Stop the orphaned tunnel process so retries don't stack
-                  try { await stopTunnel(); } catch {}
-                  setTunnelStatus("error");
-                  setStatusMessage("Docker restart cancelled.");
-                }}
-              >
-                Cancel
-              </Button>
-            )}
-
-            {tunnelUrl && (
-              <CopyField value={tunnelUrl} label="Your web link" />
-            )}
-
-            {tunnelStatus === "error" && (
-              <div className="flex gap-2">
-                <Button variant="secondary" onClick={handleStartTunnel}>
-                  Try again
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setTunnelStatus("idle");
-                    setTunnelUrl(null);
-                    setStatusMessage("");
-                  }}
-                >
-                  Change provider
-                </Button>
-              </div>
-            )}
-          </div>
-        </Card>
-      )}
-
-      {/* Temporary link info */}
-      {tunnelMode === "temporary" && isActive && (
-        <div className="flex items-start gap-3 rounded-lg bg-blue-50 border border-blue-200 p-4 mb-6">
-          <Globe className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
-          <div className="text-sm text-blue-800">
-            <p className="font-medium mb-1">This link works for setup</p>
-            <p>
-              This temporary URL is all you need to connect your social media
-              accounts. Once connected, Postiz uses saved tokens — the link
-              doesn't need to stay active.
+      {/* Legacy shared-domain warning */}
+      {effectiveLinkKind === "legacy_shared" && (
+        <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-4 mb-6">
+          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-800">
+            <p className="font-medium mb-1">
+              Shared tunnel domain no longer supported
+            </p>
+            <p className="mb-2">
+              {activeLinkUrl
+                ? `Your current web link (${activeLinkUrl}) uses a shared tunnel domain.`
+                : "Your previous setup used a shared tunnel domain."}{" "}
+              {linkSnapshot?.web_link_reason
+                ?? "Login doesn't work on these domains due to a known Postiz limitation."}{" "}
+              Choose a supported link method below.
             </p>
           </div>
         </div>
       )}
 
-      {/* Local only confirmation */}
-      {tunnelMode === "none" && (
+      {/* ── Active Link Display ─────────────────────────── */}
+      {hasConfiguredLink && effectiveLinkKind !== "legacy_shared" && !editingActiveLink && (
+        <Card className="mb-6">
+          <div className="space-y-4">
+            <StatusIndicator
+              status={activeLinkStatus}
+              label={activeLinkLabel}
+              detail={activeLinkDetail}
+            />
+            {activeLinkUrl && (
+              <CopyField
+                value={activeLinkUrl}
+                label={cloudflareLinkDisconnected ? "Configured public URL" : "Your web link"}
+              />
+            )}
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={handleChangeLink}>
+                <RefreshCw className="h-4 w-4" />
+                {cloudflareLinkDisconnected ? "Reconnect or Change Web Link" : "Change Web Link"}
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* ── Method Selection ─────────────────────────── */}
+      {showingMethodSelection && (
+        <>
+          {editingActiveLink && activeLinkUrl && (
+            <Card className="mb-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-gray-600">
+                  Your current web link will stay active until you apply a replacement.
+                </p>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setEditingActiveLink(false);
+                    setSelectedMethod(null);
+                    setStatusMessage("");
+                    setUnreachableUrl(null);
+                  }}
+                >
+                  Keep current link
+                </Button>
+              </div>
+            </Card>
+          )}
+
+          <div className="grid gap-4 mb-6">
+            {/* Card 1: Custom Domain (Recommended) */}
+            <button
+              onClick={() => handleSelectMethod("custom-domain")}
+              className={`text-left rounded-lg border-2 p-4 transition-colors ${
+                selectedMethod === "custom-domain"
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-gray-200 hover:border-gray-300 bg-white"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Globe className="h-5 w-5 text-blue-600 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-gray-900">
+                    Custom Domain
+                    <span className="ml-2 text-xs font-normal text-blue-600 bg-blue-100 px-1.5 py-0.5 rounded">
+                      Recommended
+                    </span>
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Use your own domain with HTTPS. Works with Caddy, Nginx,
+                    Traefik, or any reverse proxy.
+                  </p>
+                </div>
+              </div>
+            </button>
+
+            {/* Card 2: Cloudflare Zero Trust */}
+            <button
+              onClick={() => handleSelectMethod("cloudflare-zt")}
+              className={`text-left rounded-lg border-2 p-4 transition-colors ${
+                selectedMethod === "cloudflare-zt"
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-gray-200 hover:border-gray-300 bg-white"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Shield className="h-5 w-5 text-orange-500 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-gray-900">
+                    Cloudflare Zero Trust
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    No router changes needed. Requires a Cloudflare account and
+                    domain.
+                  </p>
+                </div>
+              </div>
+            </button>
+
+            {/* Card 3: Local Only */}
+            <button
+              onClick={() => handleSelectMethod("local-only")}
+              className={`text-left rounded-lg border-2 p-4 transition-colors ${
+                selectedMethod === "local-only"
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-gray-200 hover:border-gray-300 bg-white"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Monitor className="h-5 w-5 text-gray-500 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-gray-900">
+                    Local Only
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Access Postiz on this computer only. No social media
+                    integrations.
+                  </p>
+                </div>
+              </div>
+            </button>
+          </div>
+
+          {/* ── Custom Domain Expanded ─────────────────── */}
+          {selectedMethod === "custom-domain" && (
+            <Card className="mb-6">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <Globe className="h-4 w-4 text-blue-600" />
+                  <h3 className="text-sm font-medium text-gray-900">
+                    Custom Domain Setup
+                  </h3>
+                </div>
+
+                {/* Caddy / other proxy toggle */}
+                <div className="flex gap-2 text-xs">
+                  <button
+                    onClick={() => setShowCaddy(true)}
+                    className={`px-2 py-1 rounded ${showCaddy ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
+                  >
+                    Caddy (easiest)
+                  </button>
+                  <button
+                    onClick={() => setShowCaddy(false)}
+                    className={`px-2 py-1 rounded ${!showCaddy ? "bg-blue-100 text-blue-700" : "text-gray-500 hover:text-gray-700"}`}
+                  >
+                    I already have a proxy
+                  </button>
+                </div>
+
+                {showCaddy && (
+                  <div className="bg-gray-50 rounded-lg p-3 space-y-2">
+                    <p className="text-xs text-gray-600">
+                      Example Caddyfile for your Postiz install:
+                    </p>
+                    <pre className="text-xs bg-white rounded border border-gray-200 p-2 overflow-x-auto">
+{`postiz.example.com {
+    reverse_proxy localhost:${port}
+}`}
+                    </pre>
+                    <p className="text-xs text-gray-500">
+                      Caddy automatically provisions HTTPS certificates. See{" "}
+                      <button
+                        onClick={() => open("https://docs.postiz.com/reverse-proxies/caddy")}
+                        className="text-blue-600 hover:text-blue-700 underline"
+                      >
+                        Postiz Caddy guide
+                      </button>{" "}
+                      for details.
+                    </p>
+                  </div>
+                )}
+
+                <Input
+                  label="Your public URL"
+                  placeholder="https://postiz.example.com"
+                  value={permanentDomain}
+                  onChange={(e) => setPermanentDomain(e.target.value)}
+                  disabled={applying}
+                />
+
+                {statusMessage && (
+                  <StatusIndicator
+                    status={applying ? "loading" : unreachableUrl ? "warning" : "error"}
+                    label={statusMessage}
+                  />
+                )}
+
+                {unreachableUrl && !applying && (
+                  <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                    <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="text-sm text-amber-800">
+                      <p className="mb-2">
+                        The URL is not reachable. Make sure your reverse proxy is
+                        running and DNS points to this machine.
+                      </p>
+                      <Button
+                        variant="secondary"
+                        onClick={() => handleApplyCustomDomain(true)}
+                      >
+                        Apply anyway
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {applying && (
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      opRef.current++;
+                      try { await cancelDockerOperation(); } catch {}
+                      setApplying(false);
+                      setStatusMessage("Cancelled.");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={() => handleApplyCustomDomain(false)}
+                    disabled={!permanentDomain.trim() || applying}
+                  >
+                    {applying ? "Applying..." : "Verify & Apply"}
+                  </Button>
+                </div>
+
+                {/* Show resulting env values preview */}
+                {permanentDomain.trim() && permanentDomain.trim().startsWith("https://") && (
+                  <details className="text-xs text-gray-500">
+                    <summary className="cursor-pointer hover:text-gray-700">
+                      Environment variables that will be set
+                    </summary>
+                    <pre className="mt-1 bg-gray-50 rounded border border-gray-200 p-2 overflow-x-auto">
+{`MAIN_URL=${permanentDomain.trim().replace(/\/+$/, "")}
+FRONTEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}
+NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api`}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            </Card>
+          )}
+
+          {/* ── Cloudflare Zero Trust Expanded ─────────── */}
+          {selectedMethod === "cloudflare-zt" && (
+            <Card className="mb-6">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <Shield className="h-4 w-4 text-orange-500" />
+                  <h3 className="text-sm font-medium text-gray-900">
+                    Cloudflare Zero Trust Setup
+                  </h3>
+                </div>
+
+                {!cloudflaredInstalled && (
+                  <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                    <Download className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="text-sm text-amber-800">
+                      <p className="mb-2">
+                        Cloudflared is required but not installed.
+                      </p>
+                      <Button
+                        variant="secondary"
+                        onClick={handleInstallCloudflared}
+                        loading={installing}
+                      >
+                        <Download className="h-3 w-3" /> Install cloudflared
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-gray-50 rounded-lg p-3">
+                  <p className="text-xs text-gray-600 font-medium mb-2">
+                    Steps in the Cloudflare dashboard:
+                  </p>
+                  <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                    <li>Put your domain on Cloudflare (if not already)</li>
+                    <li>
+                      Go to{" "}
+                      <button
+                        onClick={() => open("https://one.dash.cloudflare.com/")}
+                        className="text-blue-600 hover:text-blue-700 underline"
+                      >
+                        Zero Trust dashboard
+                      </button>{" "}
+                      → Networks → Tunnels
+                    </li>
+                    <li>Create a <strong>Cloudflared</strong> tunnel</li>
+                    <li>
+                      Add a public hostname route (e.g.{" "}
+                      <code className="bg-white px-1 rounded">postiz.example.com</code>)
+                    </li>
+                    <li>
+                      Set the service URL to{" "}
+                      <code className="bg-white px-1 rounded">
+                        http://localhost:{port}
+                      </code>
+                    </li>
+                    <li>Copy the tunnel token from the install command</li>
+                    <li>Paste the URL and token below</li>
+                  </ol>
+                </div>
+
+                <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                  <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+                  <p className="text-xs text-amber-800">
+                    Do not put Cloudflare Access in front of the Postiz
+                    hostname — OAuth callbacks from social platforms must reach
+                    the app directly.
+                  </p>
+                </div>
+
+                <Input
+                  label="Public URL"
+                  placeholder="https://postiz.example.com"
+                  value={permanentDomain}
+                  onChange={(e) => setPermanentDomain(e.target.value)}
+                  disabled={applying}
+                />
+                <Input
+                  label="Tunnel token"
+                  placeholder="Paste your tunnel token here"
+                  value={tunnelConfig}
+                  onChange={(e) => setTunnelConfig(e.target.value)}
+                  disabled={applying}
+                  secret
+                />
+
+                {statusMessage && (
+                  <StatusIndicator
+                    status={applying ? "loading" : "error"}
+                    label={statusMessage}
+                  />
+                )}
+
+                {applying && (
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      opRef.current++;
+                      try { await stopTunnel(); } catch {}
+                      try { await cancelDockerOperation(); } catch {}
+                      setApplying(false);
+                      setStatusMessage("Cancelled.");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                )}
+
+                <Button
+                  onClick={handleConnectZeroTrust}
+                  disabled={
+                    !permanentDomain.trim() ||
+                    !tunnelConfig.trim() ||
+                    !cloudflaredInstalled ||
+                    applying
+                  }
+                >
+                  {applying ? "Connecting..." : "Connect Tunnel"}
+                </Button>
+              </div>
+            </Card>
+          )}
+
+          {/* ── Local Only Expanded ────────────────────── */}
+          {selectedMethod === "local-only" && (
+            <Card className="mb-6">
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Monitor className="h-4 w-4 text-gray-600" />
+                  <h3 className="text-sm font-medium text-gray-900">
+                    Local-only mode
+                  </h3>
+                </div>
+                <p className="text-sm text-gray-600">
+                  Postiz will be available at{" "}
+                  <button
+                    onClick={() => open(`http://localhost:${port}`)}
+                    className="font-mono text-blue-600 hover:text-blue-700 underline"
+                  >
+                    http://localhost:{port}
+                  </button>{" "}
+                  on this computer only. You can still use Postiz to draft and
+                  organize content, but connecting social media accounts requires
+                  a public URL.
+                </p>
+
+                {configuredProviders.length > 0 && (
+                  <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
+                    <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="text-sm text-amber-800">
+                      <p className="font-medium mb-1">
+                        Social integrations may be affected
+                      </p>
+                      <p>
+                        You previously configured{" "}
+                        {configuredProviders.length}{" "}
+                        {configuredProviders.length === 1
+                          ? "provider"
+                          : "providers"}{" "}
+                        ({configuredProviders.map(([name]) => name).join(", ")}
+                        ). OAuth callbacks require a public URL, so these
+                        integrations won't work in local-only mode.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {switchingLocal && (
+                  <>
+                    <StatusIndicator status="loading" label={statusMessage} />
+                    <Button
+                      variant="secondary"
+                      onClick={async () => {
+                        opRef.current++;
+                        try { await cancelDockerOperation(); } catch {}
+                        setSwitchingLocal(false);
+                        setStatusMessage("Switch cancelled.");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </>
+                )}
+
+                <Button
+                  onClick={handleChooseLocalOnly}
+                  disabled={switchingLocal}
+                  loading={switchingLocal}
+                >
+                  <Monitor className="h-4 w-4" />
+                  {switchingLocal ? "Switching..." : "Use locally only"}
+                </Button>
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+
+      {/* ── In-progress status (applying domain or connecting tunnel) ── */}
+      {applying && (
+        <Card className="mb-6">
+          <StatusIndicator status="loading" label={statusMessage} />
+        </Card>
+      )}
+
+      {/* ── Local only confirmation ── */}
+      {tunnelMode === "none" && !selectedMethod && (
         <Card className="mb-6">
           <div className="space-y-3">
             <div className="flex items-center gap-2">
@@ -626,209 +857,34 @@ export function CreateWebLink() {
               </h3>
             </div>
             <p className="text-sm text-gray-600">
-              Postiz will be available at{" "}
-              <button onClick={() => open(`http://localhost:${port}`)} className="font-mono text-blue-600 hover:text-blue-700 underline">
+              Postiz is available at{" "}
+              <button
+                onClick={() => open(`http://localhost:${port}`)}
+                className="font-mono text-blue-600 hover:text-blue-700 underline"
+              >
                 http://localhost:{port}
               </button>{" "}
-              on this computer only. You can still use Postiz to draft and
-              organize content, but connecting social media accounts requires a
-              public URL.
+              on this computer only.
             </p>
-            {configuredProviders.length > 0 && (
-              <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-3">
-                <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-                <div className="text-sm text-amber-800">
-                  <p className="font-medium mb-1">Social integrations unavailable</p>
-                  <p>
-                    You previously configured {configuredProviders.length}{" "}
-                    {configuredProviders.length === 1 ? "provider" : "providers"} ({configuredProviders.map(([name]) => name).join(", ")}). OAuth callbacks require a public URL, so these integrations won't work in local-only mode. Create a web link to re-enable them.
-                  </p>
-                </div>
-              </div>
-            )}
             <p className="text-sm text-gray-500">
-              You can set up a web link later by coming back to this step.
+              You can set up a web link by choosing a method above.
             </p>
             <Button
               variant="secondary"
               onClick={() => {
-                setTunnelMode("temporary" as TunnelMode);
+                handleSelectMethod("custom-domain");
+                setStatusMessage("");
               }}
             >
-              Create a web link instead
+              Set up a web link
             </Button>
-          </div>
-        </Card>
-      )}
-
-      {/* Other options (collapsed) */}
-      {tunnelStatus === "idle" && tunnelMode !== "permanent" && (
-        <div className="mb-6">
-          {/* Local only option */}
-          {tunnelMode !== "none" && (
-            <div className="rounded-lg border border-gray-200 bg-gray-50 p-4 mb-3">
-              <p className="text-sm text-gray-700 mb-2">
-                <strong>Don't need social media integrations?</strong> You can
-                skip this step and use Postiz locally at{" "}
-                <button onClick={() => open(`http://localhost:${port}`)} className="font-mono text-blue-600 hover:text-blue-700 underline">
-                  http://localhost:{port}
-                </button>
-                .
-              </p>
-              <Button variant="ghost" onClick={handleChooseLocalOnly} disabled={switchingLocal} loading={switchingLocal}>
-                <Monitor className="h-4 w-4" />
-                {switchingLocal ? "Switching to local..." : "Use locally only"}
-              </Button>
-              {switchingLocal && (
-                <>
-                  <StatusIndicator status="loading" label={statusMessage} />
-                  <Button
-                    variant="secondary"
-                    className="mt-2"
-                    onClick={async () => {
-                      localOpRef.current++;
-                      try { await cancelDockerOperation(); } catch {}
-                      setSwitchingLocal(false);
-                      setStatusMessage("Switch cancelled.");
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </>
-              )}
-            </div>
-          )}
-
-          {/* Advanced: permanent domain */}
-          <button
-            onClick={() => setShowAdvanced(!showAdvanced)}
-            className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
-          >
-            <ChevronDown
-              className={`h-3 w-3 transition-transform ${showAdvanced ? "rotate-180" : ""}`}
-            />
-            Advanced: I have my own domain
-          </button>
-
-          {showAdvanced && (
-            <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-4">
-              <div className="flex items-start gap-2 mb-3">
-                <Link className="h-4 w-4 text-gray-500 mt-0.5 shrink-0" />
-                <div>
-                  <p className="text-sm font-medium text-gray-900">
-                    Use your own domain
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    This requires you to already have a domain name, DNS
-                    configured to point to this machine, and HTTPS set up (via a
-                    reverse proxy like Nginx/Caddy or a Cloudflare tunnel with a
-                    custom domain). This is an advanced option for experienced
-                    users.
-                  </p>
-                </div>
-              </div>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setTunnelMode("permanent");
-                  setDomainApplied(false);
-                  setShowAdvanced(false);
-                }}
-              >
-                Configure my domain
-              </Button>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Permanent mode: domain input */}
-      {tunnelMode === "permanent" && (
-        <Card className="mb-6">
-          <div className="space-y-4">
-            <div className="flex items-center gap-2 mb-1">
-              <Link className="h-4 w-4 text-gray-600" />
-              <h3 className="text-sm font-medium text-gray-900">
-                Custom Domain
-              </h3>
-            </div>
-            {!domainApplied ? (
-              <>
-                <Input
-                  label="Your domain URL"
-                  placeholder="https://postiz.example.com"
-                  value={permanentDomain}
-                  onChange={(e) => setPermanentDomain(e.target.value)}
-                  disabled={applyingDomain}
-                />
-                <p className="text-xs text-gray-500">
-                  Enter the full URL including <code>https://</code>. Your
-                  domain must already resolve to this machine with HTTPS
-                  configured.
-                </p>
-                {applyingDomain && (
-                  <>
-                    <StatusIndicator status="loading" label={statusMessage} />
-                    <Button
-                      variant="secondary"
-                      onClick={async () => {
-                        domainOpRef.current++;
-                        try { await cancelDockerOperation(); } catch {}
-                        setApplyingDomain(false);
-                        setStatusMessage("Domain apply cancelled.");
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  </>
-                )}
-                <div className="flex items-center gap-2">
-                  <Button
-                    onClick={handleApplyDomain}
-                    disabled={!permanentDomain.trim() || applyingDomain}
-                  >
-                    {applyingDomain ? "Applying..." : "Apply Domain"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setTunnelMode("temporary" as TunnelMode);
-                    }}
-                  >
-                    Use temporary link instead
-                  </Button>
-                </div>
-              </>
-            ) : (
-              <>
-                <StatusIndicator status={domainReachable ? "success" : "warning"} label={statusMessage} />
-                {tunnelUrl && (
-                  <CopyField value={tunnelUrl} label="Your domain" />
-                )}
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setDomainApplied(false);
-                    setTunnelStatus("idle");
-                    setTunnelUrl(null);
-                  }}
-                >
-                  Change domain
-                </Button>
-              </>
-            )}
           </div>
         </Card>
       )}
 
       <NavigationButtons
         canProceed={canProceed}
-        loading={
-          tunnelStatus === "starting" ||
-          tunnelStatus === "restarting" ||
-          applyingDomain ||
-          switchingLocal
-        }
+        loading={applying || switchingLocal}
         onNext={() => setStep(4)}
       />
     </div>

@@ -21,9 +21,9 @@ pub fn parse_env_file(contents: &str) -> HashMap<String, String> {
     map
 }
 
-fn write_env_file(path: &Path, updates: &HashMap<String, String>) -> Result<(), String> {
-    let contents = fs::read_to_string(path)
-        .map_err(|e| format!("Failed to read env file: {}", e))?;
+pub(super) fn write_env_file(path: &Path, updates: &HashMap<String, String>) -> Result<(), String> {
+    let contents =
+        fs::read_to_string(path).map_err(|e| format!("Failed to read env file: {}", e))?;
 
     // Create backup
     let backup_path = path.with_extension("env.bak");
@@ -61,10 +61,8 @@ fn write_env_file(path: &Path, updates: &HashMap<String, String>) -> Result<(), 
 
     let content = new_lines.join("\n") + "\n";
     let tmp = path.with_extension("env.tmp");
-    fs::write(&tmp, &content)
-        .map_err(|e| format!("Failed to write temp env file: {}", e))?;
-    fs::rename(&tmp, path)
-        .map_err(|e| format!("Failed to rename temp env file: {}", e))?;
+    fs::write(&tmp, &content).map_err(|e| format!("Failed to write temp env file: {}", e))?;
+    fs::rename(&tmp, path).map_err(|e| format!("Failed to rename temp env file: {}", e))?;
 
     Ok(())
 }
@@ -80,12 +78,16 @@ pub fn stage_provider_config(
     // Stage the changes (don't write to disk yet)
     // Provider is NOT marked as configured until apply succeeds.
     for (key, value) in &entries {
-        app_state.pending_env_changes.insert(key.clone(), value.clone());
+        app_state
+            .pending_env_changes
+            .insert(key.clone(), value.clone());
     }
 
     // Also save credentials to provider_credentials for local persistence
     // (survives restarts via install-state.json, independent of postiz.env)
-    app_state.provider_credentials.insert(provider.clone(), entries);
+    app_state
+        .provider_credentials
+        .insert(provider.clone(), entries);
 
     Ok(format!("Provider {} config staged.", provider))
 }
@@ -120,7 +122,10 @@ pub fn get_postiz_credentials(
     state: State<SharedState>,
 ) -> Result<(Option<String>, Option<String>), String> {
     let app_state = state.lock().unwrap_or_else(|e| e.into_inner());
-    Ok((app_state.postiz_email.clone(), app_state.postiz_password.clone()))
+    Ok((
+        app_state.postiz_email.clone(),
+        app_state.postiz_password.clone(),
+    ))
 }
 
 #[tauri::command]
@@ -141,13 +146,21 @@ pub fn apply_provider_changes(path: String, state: State<SharedState>) -> Result
     write_env_file(&env_path, &pending)?;
 
     // Now that the write succeeded, clear pending changes
-    state.lock().unwrap_or_else(|e| e.into_inner()).pending_env_changes.clear();
+    state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .pending_env_changes
+        .clear();
 
     Ok(format!("Applied {} env changes.", pending.len()))
 }
 
 #[tauri::command]
-pub fn update_base_urls(path: String, base_url: String, state: State<SharedState>) -> Result<String, String> {
+pub fn update_base_urls(
+    path: String,
+    base_url: String,
+    state: State<SharedState>,
+) -> Result<String, String> {
     let install_path = PathBuf::from(&path);
     let env_path = install_path.join("postiz.env");
 
@@ -173,8 +186,8 @@ pub fn update_base_urls(path: String, base_url: String, state: State<SharedState
 #[tauri::command]
 pub fn read_env_value(path: String, key: String) -> Result<Option<String>, String> {
     let env_path = PathBuf::from(&path).join("postiz.env");
-    let contents = fs::read_to_string(&env_path)
-        .map_err(|e| format!("Failed to read env file: {}", e))?;
+    let contents =
+        fs::read_to_string(&env_path).map_err(|e| format!("Failed to read env file: {}", e))?;
 
     let map = parse_env_file(&contents);
     Ok(map.get(&key).cloned())
@@ -212,8 +225,7 @@ pub async fn apply_config_transaction(
 
     // Create backup
     let backup_path = env_path.with_extension("env.bak");
-    fs::copy(&env_path, &backup_path)
-        .map_err(|e| format!("Failed to create backup: {}", e))?;
+    fs::copy(&env_path, &backup_path).map_err(|e| format!("Failed to create backup: {}", e))?;
 
     let _ = app.emit("docker-progress", "Backup created. Writing new config...");
 
@@ -268,11 +280,16 @@ pub async fn apply_config_transaction(
             .args(["compose", "--env-file", "postiz.env", "up", "-d"])
             .current_dir(&install_path)
             .output();
-        return Err("Config changes caused startup failure. Changes have been rolled back.".to_string());
+        return Err(
+            "Config changes caused startup failure. Changes have been rolled back.".to_string(),
+        );
     }
 
     // Wait 15 seconds for services to start
-    let _ = app.emit("docker-progress", "Waiting 15 seconds for services to start...");
+    let _ = app.emit(
+        "docker-progress",
+        "Waiting 15 seconds for services to start...",
+    );
     tokio::time::sleep(std::time::Duration::from_secs(15)).await;
 
     // Check if cancelled during the wait
@@ -297,7 +314,11 @@ pub async fn apply_config_transaction(
 
     if healthy {
         // Clear pending changes from state
-        state.lock().unwrap_or_else(|e| e.into_inner()).pending_env_changes.clear();
+        state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .pending_env_changes
+            .clear();
         let _ = app.emit("docker-progress", "Config applied successfully!");
         Ok(format!(
             "Applied {} config changes successfully.",
@@ -305,7 +326,10 @@ pub async fn apply_config_transaction(
         ))
     } else {
         // ROLLBACK
-        let _ = app.emit("docker-progress", "Health check failed. Rolling back config...");
+        let _ = app.emit(
+            "docker-progress",
+            "Health check failed. Rolling back config...",
+        );
         if let Err(rb_err) = fs::copy(&backup_path, &env_path) {
             return Err(format!(
                 "Health check failed AND rollback also failed ({}). Manual fix required: restore {} from {}.",
@@ -324,6 +348,31 @@ pub async fn apply_config_transaction(
             .current_dir(&install_path)
             .output();
 
-        Err("Config changes caused health check failure. Changes have been rolled back.".to_string())
+        Err(
+            "Config changes caused health check failure. Changes have been rolled back."
+                .to_string(),
+        )
     }
+}
+
+/// Set all three URL vars to a public HTTPS domain.
+pub(super) fn write_public_base_urls(env_path: &Path, public_url: &str) -> Result<(), String> {
+    let mut updates = HashMap::new();
+    updates.insert("MAIN_URL".into(), public_url.to_string());
+    updates.insert("FRONTEND_URL".into(), public_url.to_string());
+    updates.insert(
+        "NEXT_PUBLIC_BACKEND_URL".into(),
+        format!("{}/api", public_url),
+    );
+    write_env_file(env_path, &updates)
+}
+
+/// Reset all three URL vars to localhost.
+pub(super) fn write_local_base_urls(env_path: &Path, port: u16) -> Result<(), String> {
+    let base = format!("http://localhost:{}", port);
+    let mut updates = HashMap::new();
+    updates.insert("MAIN_URL".into(), base.clone());
+    updates.insert("FRONTEND_URL".into(), base.clone());
+    updates.insert("NEXT_PUBLIC_BACKEND_URL".into(), format!("{}/api", base));
+    write_env_file(env_path, &updates)
 }

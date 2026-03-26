@@ -3,8 +3,6 @@ import {
   getInstallSnapshot,
   restartAndVerify,
   cancelDockerOperation,
-  reconnectTunnel,
-  saveResumeState,
   stopStack,
   cleanStagedFiles,
   onDockerProgress,
@@ -36,19 +34,16 @@ export function RecoveryCenter({
   snapshot: initialSnapshot,
   onResumeWizard,
 }: RecoveryCenterProps) {
-  const { setStep, tunnelProvider } = useWizardStore();
+  const { setStep } = useWizardStore();
   const [snapshot, setSnapshot] = useState<InstallSnapshot>(initialSnapshot);
   const [repairing, setRepairing] = useState(false);
   const [repairProgress, setRepairProgress] = useState("");
   const [repairElapsed, setRepairElapsed] = useState(0);
   const repairTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [reconnecting, setReconnecting] = useState(false);
   const [cleaningStaged, setCleaningStaged] = useState(false);
   const [showCleanConfirm, setShowCleanConfirm] = useState(false);
   const [showRebuildConfirm, setShowRebuildConfirm] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const [showReconnectInput, setShowReconnectInput] = useState(false);
-  const [reconnectConfig, setReconnectConfig] = useState("");
   const displayedStep = Math.min(snapshot.current_step, 5) + 1;
 
   const installPath = snapshot.install_path ?? "";
@@ -110,32 +105,6 @@ export function RecoveryCenter({
   const fmtElapsed = (s: number) => {
     const m = Math.floor(s / 60);
     return m === 0 ? `${s % 60}s` : `${m}m ${s % 60}s`;
-  };
-
-  const needsReconnectConfig = tunnelProvider === "ngrok" || tunnelProvider === "pinggy";
-
-  const handleReconnectTunnelClick = () => {
-    if (needsReconnectConfig) {
-      setShowReconnectInput(true);
-    } else {
-      handleReconnectTunnel();
-    }
-  };
-
-  const handleReconnectTunnel = async () => {
-    setShowReconnectInput(false);
-    setReconnecting(true);
-    try {
-      const url = await reconnectTunnel(snapshot.port, installPath, tunnelProvider, reconnectConfig || undefined);
-      setReconnectConfig("");
-      await refreshSnapshot();
-      await saveResumeState().catch(() => {});
-      showToast(`Tunnel connected: ${url}`, "success");
-    } catch (err) {
-      showToast(`Reconnect failed: ${String(err)}`, "error");
-    } finally {
-      setReconnecting(false);
-    }
   };
 
   const handleOpenFolder = async () => {
@@ -220,18 +189,24 @@ export function RecoveryCenter({
             status={
               snapshot.tunnel_alive
                 ? "success"
-                : snapshot.tunnel_mode === "permanent" && snapshot.permanent_domain
+                : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
                   ? "success"
+                  : snapshot.web_link_kind === "cloudflare"
+                    ? "warning"
                   : snapshot.tunnel_mode === "none"
                     ? "warning"
-                    : "error"
+                  : "error"
             }
             label="Web Link"
             detail={
               snapshot.tunnel_alive
                 ? snapshot.tunnel_url ?? "Active"
-                : snapshot.tunnel_mode === "permanent" && snapshot.permanent_domain
+                : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
                   ? `Custom domain: ${snapshot.permanent_domain}`
+                  : snapshot.web_link_kind === "cloudflare"
+                    ? snapshot.permanent_domain
+                      ? `Cloudflare tunnel disconnected (${snapshot.permanent_domain})`
+                      : "Cloudflare tunnel disconnected"
                   : snapshot.tunnel_mode === "none"
                     ? "Local-only mode (no social platform connections)"
                     : "Disconnected"
@@ -314,7 +289,7 @@ export function RecoveryCenter({
           </div>
         </Card>
 
-        {/* Reconnect Tunnel */}
+        {/* Manage Web Link */}
         <Card className="flex flex-col">
           <div className="flex items-start gap-3 mb-4">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-purple-100">
@@ -322,61 +297,20 @@ export function RecoveryCenter({
             </div>
             <div className="min-w-0">
               <h4 className="text-sm font-semibold text-gray-900">
-                Reconnect Web Link
+                Manage Web Link
               </h4>
               <p className="text-xs text-gray-500 mt-0.5">
-                Re-establish the public URL for social platforms
+                Set up or change the public URL for social platforms
               </p>
             </div>
           </div>
-          <div className="mt-auto space-y-3">
-            {showReconnectInput && (
-              <div>
-                <p className="text-xs text-gray-500 mb-2">
-                  {tunnelProvider === "ngrok" ? "ngrok authtoken" : "Pinggy token"} (optional).{" "}
-                  {tunnelProvider === "ngrok" ? (
-                    <button onClick={() => open("https://ngrok.com/signup")} className="text-blue-600 hover:text-blue-700 underline">Get one at ngrok.com</button>
-                  ) : (
-                    <button onClick={() => open("https://pinggy.io")} className="text-blue-600 hover:text-blue-700 underline">Get one at pinggy.io</button>
-                  )}
-                </p>
-                <input
-                  type="password"
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 mb-2"
-                  placeholder={tunnelProvider === "ngrok" ? "ngrok authtoken" : "Pinggy token"}
-                  value={reconnectConfig}
-                  onChange={(e) => setReconnectConfig(e.target.value)}
-                />
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="primary"
-                    onClick={handleReconnectTunnel}
-                    loading={reconnecting}
-                  >
-                    Reconnect
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() => {
-                      setShowReconnectInput(false);
-                      setReconnectConfig("");
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            )}
-            {!showReconnectInput && (
-              <Button
-                variant="secondary"
-                onClick={handleReconnectTunnelClick}
-                loading={reconnecting}
-                disabled={snapshot.tunnel_mode !== "temporary" || !installPath}
-              >
-                Reconnect{tunnelProvider ? ` (${tunnelProvider})` : ""}
-              </Button>
-            )}
+          <div className="mt-auto">
+            <Button
+              variant="secondary"
+              onClick={() => { setStep(3); onResumeWizard(); }}
+            >
+              Manage
+            </Button>
           </div>
         </Card>
 

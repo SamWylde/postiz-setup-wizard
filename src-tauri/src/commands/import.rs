@@ -94,8 +94,7 @@ pub async fn import_existing_install(
     let pointer = serde_json::json!({ "install_path": path });
     let content = serde_json::to_string_pretty(&pointer).unwrap_or_default();
     let tmp = pointer_path.with_extension("tmp");
-    fs::write(&tmp, &content)
-        .map_err(|e| format!("Failed to write install pointer: {}", e))?;
+    fs::write(&tmp, &content).map_err(|e| format!("Failed to write install pointer: {}", e))?;
     fs::rename(&tmp, &pointer_path)
         .map_err(|e| format!("Failed to rename install pointer: {}", e))?;
 

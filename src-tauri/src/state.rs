@@ -8,17 +8,14 @@ use std::sync::Mutex;
 pub enum TunnelProvider {
     #[default]
     Cloudflared,
-    Ngrok,
-    Zrok,
-    Pinggy,
+    Manual,
 }
 
 impl TunnelProvider {
     pub fn from_str_loose(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "ngrok" => Self::Ngrok,
-            "zrok" => Self::Zrok,
-            "pinggy" => Self::Pinggy,
+            "manual" => Self::Manual,
+            // Legacy values ("ngrok", "zrok", "pinggy") fall through to default
             _ => Self::Cloudflared,
         }
     }
@@ -26,9 +23,7 @@ impl TunnelProvider {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Cloudflared => "cloudflared",
-            Self::Ngrok => "ngrok",
-            Self::Zrok => "zrok",
-            Self::Pinggy => "pinggy",
+            Self::Manual => "manual",
         }
     }
 }
@@ -105,6 +100,11 @@ pub struct InstallSnapshot {
     pub tunnel_provider: String,
     pub permanent_domain: Option<String>,
 
+    // Web link (derived)
+    pub web_link_kind: String, // "none" | "manual" | "cloudflare" | "legacy_shared"
+    pub web_link_supported: bool,
+    pub web_link_reason: Option<String>,
+
     // Providers
     pub providers_configured: Vec<String>,
     pub providers_stale: Vec<String>,
@@ -127,6 +127,13 @@ pub struct PreflightCheck {
     pub name: String,
     pub passed: bool,
     pub message: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct PublicUrlCheck {
+    pub reachable: bool,
+    pub status_code: Option<u16>,
+    pub error: Option<String>,
 }
 
 pub struct AppState {

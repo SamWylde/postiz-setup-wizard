@@ -4,8 +4,6 @@ import {
   getDockerLogs,
   restartAndVerify,
   stopStack,
-  reconnectTunnel,
-  saveResumeState,
   exportDiagnostics,
   checkForUpdate,
   installUpdate,
@@ -85,18 +83,15 @@ function friendlyContainerStatus(state: string, health: string): string {
 }
 
 export function StatusDashboard() {
-  const { installPath, port, tunnelProvider, tunnelConfig, setTunnelConfig, setStep, setProviderStatus, providers } = useWizardStore();
+  const { installPath, port, setStep } = useWizardStore();
 
   const [snapshot, setSnapshot] = useState<InstallSnapshot | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [restarting, setRestarting] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const [reconnecting, setReconnecting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
   const [showExport, setShowExport] = useState(false);
-  const [showReconnectDialog, setShowReconnectDialog] = useState(false);
-  const [reconnectConfig, setReconnectConfig] = useState(tunnelConfig || "");
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [updateChecking, setUpdateChecking] = useState(false);
   const [updateInstalling, setUpdateInstalling] = useState(false);
@@ -243,7 +238,7 @@ export function StatusDashboard() {
     // FRONTEND_URL's domain, so the browser must access via the same URL.
     const url = (snapshot?.tunnel_alive && snapshot?.tunnel_url)
       ? snapshot.tunnel_url
-      : (snapshot?.tunnel_mode === "permanent" && snapshot?.permanent_domain)
+      : (snapshot?.web_link_kind === "manual" && snapshot?.permanent_domain)
         ? snapshot.permanent_domain
         : localUrl;
     try {
@@ -280,52 +275,7 @@ export function StatusDashboard() {
     }
   };
 
-  const needsReconnectConfig = tunnelProvider === "ngrok" || tunnelProvider === "pinggy";
-
-  const handleReconnectTunnelClick = () => {
-    if (needsReconnectConfig) {
-      setShowReconnectDialog(true);
-    } else {
-      handleReconnectTunnel();
-    }
-  };
-
-  const handleReconnectTunnel = async () => {
-    setShowReconnectDialog(false);
-    setReconnecting(true);
-    try {
-      const previousUrl = snapshot?.tunnel_url;
-      const url = await reconnectTunnel(port, installPath, tunnelProvider, reconnectConfig || undefined);
-      // Persist the token to store/backend so it survives restarts
-      if (reconnectConfig) {
-        setTunnelConfig(reconnectConfig);
-      }
-      setReconnectConfig("");
-      await fetchSnapshot();
-      // If the URL changed, mark all configured providers as stale
-      if (previousUrl && url !== previousUrl) {
-        const configured = Object.entries(providers)
-          .filter(([, s]) => s === "configured")
-          .map(([id]) => id);
-        for (const id of configured) {
-          setProviderStatus(id, "stale");
-        }
-        if (configured.length > 0) {
-          showToast(`Tunnel connected: ${url}. Provider redirect URLs need updating.`, "success");
-        } else {
-          showToast(`Tunnel connected: ${url}`, "success");
-        }
-      } else {
-        showToast(`Tunnel connected: ${url}`, "success");
-      }
-      // Persist the updated state
-      await saveResumeState().catch(() => {});
-    } catch (err) {
-      showToast(`Reconnect failed: ${String(err)}`, "error");
-    } finally {
-      setReconnecting(false);
-    }
-  };
+  // Legacy reconnect removed — "Manage Web Link" navigates to step 3 instead
 
   const handleExportDiagnostics = async () => {
     setExporting(true);
@@ -356,9 +306,13 @@ export function StatusDashboard() {
   const overallHealth =
     snapshot == null
       ? "loading"
-      : snapshot.all_healthy && snapshot.postiz_responding
-        ? "success"
-        : "error";
+      : !snapshot.all_healthy || !snapshot.postiz_responding
+        ? "error"
+        : snapshot.web_link_kind === "cloudflare" && !snapshot.tunnel_alive
+          ? "warning"
+          : snapshot.web_link_kind === "legacy_shared"
+            ? "warning"
+            : "success";
 
   return (
     <div className="max-w-3xl">
@@ -438,10 +392,14 @@ export function StatusDashboard() {
                 ? "loading"
                 : snapshot.tunnel_alive
                   ? "success"
-                  : snapshot.tunnel_mode === "permanent" && snapshot.permanent_domain
+                  : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
                     ? "success"
-                    : snapshot.tunnel_mode === "none"
+                  : snapshot.tunnel_mode === "none"
                       ? "success"
+                      : snapshot.web_link_kind === "cloudflare"
+                        ? "warning"
+                        : snapshot.web_link_kind === "legacy_shared"
+                          ? "warning"
                       : snapshot.providers_configured.length > 0
                         ? "success"
                         : "warning"
@@ -452,10 +410,16 @@ export function StatusDashboard() {
                 ? "Checking..."
                 : snapshot.tunnel_alive
                   ? snapshot.tunnel_url ?? "Active"
-                  : snapshot.tunnel_mode === "permanent" && snapshot.permanent_domain
+                  : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
                     ? `Custom domain: ${snapshot.permanent_domain}`
-                    : snapshot.tunnel_mode === "none"
+                  : snapshot.tunnel_mode === "none"
                       ? "Local-only mode"
+                      : snapshot.web_link_kind === "cloudflare"
+                        ? snapshot.permanent_domain
+                          ? `Cloudflare tunnel disconnected (${snapshot.permanent_domain})`
+                          : "Cloudflare tunnel disconnected"
+                        : snapshot.web_link_kind === "legacy_shared"
+                          ? snapshot.web_link_reason ?? "Legacy shared tunnel no longer supported"
                       : snapshot.providers_configured.length > 0
                         ? "Not needed — accounts use saved tokens"
                         : "Disconnected — needed to connect accounts"
@@ -465,14 +429,16 @@ export function StatusDashboard() {
           {/* Overall */}
           <div className="pt-2 mt-2 border-t border-gray-100">
             <StatusIndicator
-              status={overallHealth as "success" | "error" | "loading"}
+              status={overallHealth as "success" | "warning" | "error" | "loading"}
               label="Overall Health"
               detail={
                 snapshot == null
                   ? "Checking..."
                   : overallHealth === "success"
                     ? "All systems operational"
-                    : "Issues detected"
+                    : overallHealth === "warning"
+                      ? "Working locally, but your public web link needs attention"
+                      : "Issues detected"
               }
             />
           </div>
@@ -613,7 +579,10 @@ export function StatusDashboard() {
             <CopyField value={snapshot.tunnel_url} label="Public URL" />
           )}
           {!snapshot?.tunnel_alive && snapshot?.tunnel_mode === "permanent" && snapshot?.permanent_domain && (
-            <CopyField value={snapshot.permanent_domain} label="Custom Domain" />
+            <CopyField
+              value={snapshot.permanent_domain}
+              label={snapshot.web_link_kind === "cloudflare" ? "Configured public URL" : "Custom Domain"}
+            />
           )}
           <CopyField value={localUrl} label="Local URL" />
 
@@ -644,13 +613,15 @@ export function StatusDashboard() {
             <p className="text-sm text-gray-600">
               Web link mode:{" "}
               <span className="font-medium">
-                {snapshot?.tunnel_mode === "temporary"
-                  ? "Temporary tunnel"
-                  : snapshot?.tunnel_mode === "permanent"
+                {snapshot?.web_link_kind === "cloudflare"
+                  ? "Cloudflare Zero Trust"
+                  : snapshot?.web_link_kind === "manual"
                     ? "Custom domain"
-                    : snapshot?.tunnel_mode === "none"
-                      ? "Local only"
-                      : "Unknown"}
+                    : snapshot?.web_link_kind === "legacy_shared"
+                      ? "Legacy shared tunnel"
+                      : snapshot?.tunnel_mode === "none"
+                        ? "Local only"
+                        : "Unknown"}
               </span>
               {snapshot?.permanent_domain && (
                 <span className="text-gray-400">
@@ -705,16 +676,10 @@ export function StatusDashboard() {
           </div>
         )}
 
-        {snapshot?.tunnel_mode === "temporary" && !snapshot?.tunnel_alive && (
-          <Button
-            variant="secondary"
-            onClick={handleReconnectTunnelClick}
-            loading={reconnecting}
-          >
-            <Globe className="h-4 w-4" />
-            Reconnect Web Link{tunnelProvider ? ` (${tunnelProvider})` : ""}
-          </Button>
-        )}
+        <Button variant="secondary" onClick={() => setStep(3)}>
+          <Globe className="h-4 w-4" />
+          Manage Web Link
+        </Button>
 
         <Button
           variant="secondary"
@@ -742,44 +707,6 @@ export function StatusDashboard() {
           Minimize to Tray
         </Button>
       </div>
-
-      {showReconnectDialog && (
-        <Card className="mb-6">
-          <h4 className="text-sm font-medium text-gray-700 mb-2">
-            {tunnelProvider === "ngrok" ? "ngrok Authtoken" : "Pinggy Token"} (optional)
-          </h4>
-          <p className="text-xs text-gray-500 mb-3">
-            Provide your {tunnelProvider === "ngrok" ? "ngrok authtoken" : "Pinggy token"} to reconnect, or leave blank to attempt without it.
-            {" "}
-            {tunnelProvider === "ngrok" ? (
-              <button onClick={() => open("https://ngrok.com/signup")} className="text-blue-600 hover:text-blue-700 underline">Get one at ngrok.com</button>
-            ) : (
-              <button onClick={() => open("https://pinggy.io")} className="text-blue-600 hover:text-blue-700 underline">Get one at pinggy.io</button>
-            )}
-          </p>
-          <input
-            type="password"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 mb-3"
-            placeholder={tunnelProvider === "ngrok" ? "ngrok authtoken" : "Pinggy token"}
-            value={reconnectConfig}
-            onChange={(e) => setReconnectConfig(e.target.value)}
-          />
-          <div className="flex items-center gap-2">
-            <Button variant="primary" onClick={handleReconnectTunnel}>
-              Reconnect
-            </Button>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setShowReconnectDialog(false);
-                setReconnectConfig("");
-              }}
-            >
-              Cancel
-            </Button>
-          </div>
-        </Card>
-      )}
 
       {showExport && (
         <div className="mb-6">

@@ -8,7 +8,8 @@ use crate::commands::silent_cmd;
 use crate::state::SharedState;
 
 const DOCKER_COMPOSE_TEMPLATE: &str = include_str!("../templates/docker-compose.yml");
-const DYNAMIC_CONFIG_TEMPLATE: &str = include_str!("../templates/dynamicconfig/development-sql.yaml");
+const DYNAMIC_CONFIG_TEMPLATE: &str =
+    include_str!("../templates/dynamicconfig/development-sql.yaml");
 
 fn find_free_port(start: u16) -> u16 {
     let end = start.saturating_add(1000);
@@ -189,12 +190,10 @@ pub fn commit_install(path: String) -> Result<String, String> {
     let env_exists = install_path.join("postiz.env").exists();
     if !tmp_path.exists() {
         if compose_exists || env_exists {
-            return Err(
-                "Refusing to overwrite an existing Postiz install. \
+            return Err("Refusing to overwrite an existing Postiz install. \
                  A docker-compose.yml or postiz.env already exists at the target path \
                  without a staged .tmp folder. Use recovery/import instead."
-                    .to_string(),
-            );
+                .to_string());
         }
         return Err("No staged install found. Run prepare_install first.".to_string());
     }
@@ -207,8 +206,8 @@ pub fn commit_install(path: String) -> Result<String, String> {
     }
 
     // Move files from .tmp to install root
-    let entries = fs::read_dir(&tmp_path)
-        .map_err(|e| format!("Failed to read tmp directory: {}", e))?;
+    let entries =
+        fs::read_dir(&tmp_path).map_err(|e| format!("Failed to read tmp directory: {}", e))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
@@ -218,8 +217,7 @@ pub fn commit_install(path: String) -> Result<String, String> {
             // Copy directory recursively
             copy_dir_recursive(&entry.path(), &dest)?;
         } else {
-            fs::copy(entry.path(), &dest)
-                .map_err(|e| format!("Failed to copy file: {}", e))?;
+            fs::copy(entry.path(), &dest).map_err(|e| format!("Failed to copy file: {}", e))?;
         }
     }
 
@@ -231,7 +229,8 @@ pub fn commit_install(path: String) -> Result<String, String> {
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
-    fs::create_dir_all(dst).map_err(|e| format!("Failed to create dir {}: {}", dst.display(), e))?;
+    fs::create_dir_all(dst)
+        .map_err(|e| format!("Failed to create dir {}: {}", dst.display(), e))?;
 
     for entry in
         fs::read_dir(src).map_err(|e| format!("Failed to read dir {}: {}", src.display(), e))?
@@ -242,8 +241,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
         if entry.path().is_dir() {
             copy_dir_recursive(&entry.path(), &dst_path)?;
         } else {
-            fs::copy(entry.path(), &dst_path)
-                .map_err(|e| format!("Failed to copy: {}", e))?;
+            fs::copy(entry.path(), &dst_path).map_err(|e| format!("Failed to copy: {}", e))?;
         }
     }
     Ok(())
@@ -290,7 +288,14 @@ pub fn wipe_existing_install(path: String, state: State<SharedState>) -> Result<
 
     // 1. Try to stop containers (best-effort — they might not be running)
     let _ = silent_cmd("docker")
-        .args(["compose", "--env-file", "postiz.env", "down", "--remove-orphans", "-v"])
+        .args([
+            "compose",
+            "--env-file",
+            "postiz.env",
+            "down",
+            "--remove-orphans",
+            "-v",
+        ])
         .current_dir(&install_path)
         .output();
 

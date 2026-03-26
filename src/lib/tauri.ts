@@ -17,6 +17,9 @@ export interface InstallSnapshot {
   tunnel_mode: string;
   tunnel_provider: string;
   permanent_domain: string | null;
+  web_link_kind: "none" | "manual" | "cloudflare" | "legacy_shared";
+  web_link_supported: boolean;
+  web_link_reason: string | null;
   providers_configured: string[];
   providers_stale: string[];
   current_step: number;
@@ -37,9 +40,7 @@ export type BootstrapAction =
   | "InstallDocker"
   | "StartDocker"
   | "SwitchLinuxContainers"
-  | "InstallCloudflared"
-  | "InstallNgrok"
-  | "InstallZrok";
+  | "InstallCloudflared";
 
 export const runBootstrap = (action: BootstrapAction) =>
   invoke<string>("run_bootstrap", { action });
@@ -83,9 +84,9 @@ export const cancelDockerOperation = () =>
   invoke<string>("cancel_docker_operation");
 
 // Tunnel commands
-export type TunnelProvider = "cloudflared" | "ngrok" | "zrok" | "pinggy";
+export type TunnelProvider = "cloudflared" | "manual";
 
-const VALID_TUNNEL_PROVIDERS: readonly TunnelProvider[] = ["cloudflared", "ngrok", "zrok", "pinggy"];
+const VALID_TUNNEL_PROVIDERS: readonly TunnelProvider[] = ["cloudflared", "manual"];
 
 /** Parse a string into a valid TunnelProvider, defaulting to "cloudflared" for unknown values. */
 export function parseTunnelProvider(s: string | undefined | null): TunnelProvider {
@@ -120,6 +121,26 @@ export const applyConfigTransaction = (path: string) =>
 
 export const updateBaseUrls = (path: string, baseUrl: string) =>
   invoke<string>("update_base_urls", { path, baseUrl });
+
+// Web link commands
+export interface PublicUrlCheck {
+  reachable: boolean;
+  status_code: number | null;
+  error: string | null;
+}
+
+export const applyManualDomain = (path: string, publicUrl: string, force?: boolean) =>
+  invoke<string>("apply_manual_domain", { path, publicUrl, force: force ?? false });
+
+export const connectCloudflareZeroTrust = (
+  path: string, port: number, publicUrl: string, token: string,
+) => invoke<string>("connect_cloudflare_zero_trust", { path, port, publicUrl, token });
+
+export const switchToLocalOnly = (path: string, port: number) =>
+  invoke<string>("switch_to_local_only", { path, port });
+
+export const verifyPublicUrl = (publicUrl: string) =>
+  invoke<PublicUrlCheck>("verify_public_url", { publicUrl });
 
 export const readEnvValue = (path: string, key: string) =>
   invoke<string | null>("read_env_value", { path, key });

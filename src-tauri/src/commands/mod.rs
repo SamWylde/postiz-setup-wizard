@@ -11,6 +11,7 @@ pub mod transfer;
 pub mod tunnel;
 pub mod updater;
 pub mod upgrade;
+pub mod web_link;
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -31,7 +32,15 @@ pub fn silent_cmd(program: &str) -> std::process::Command {
 /// Redacts only the values of KEY=VALUE pairs where the key contains a secret keyword.
 /// Leaves normal prose (error messages mentioning "password", "token", etc.) untouched.
 pub fn sanitize_log_line(line: &str) -> String {
-    let secret_keys = ["password", "secret", "token", "apikey", "api_key", "auth_token", "private_key"];
+    let secret_keys = [
+        "password",
+        "secret",
+        "token",
+        "apikey",
+        "api_key",
+        "auth_token",
+        "private_key",
+    ];
 
     // Process the line by finding all '=' characters and checking whether the
     // preceding key contains a secret keyword.  We build the result in a single

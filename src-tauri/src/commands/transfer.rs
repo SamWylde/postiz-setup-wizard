@@ -43,7 +43,11 @@ pub struct TransferProgress {
 const VOLUME_MOUNTS: &[(&str, &str, &str)] = &[
     ("postiz", "/config/", "postiz-config"),
     ("postiz", "/uploads/", "postiz-uploads"),
-    ("postiz-postgres", "/var/lib/postgresql/data", "postgres-volume"),
+    (
+        "postiz-postgres",
+        "/var/lib/postgresql/data",
+        "postgres-volume",
+    ),
     ("postiz-redis", "/data", "postiz-redis-data"),
     (
         "temporal-elasticsearch",
@@ -57,7 +61,13 @@ const VOLUME_MOUNTS: &[(&str, &str, &str)] = &[
     ),
 ];
 
-fn emit_progress(app: &tauri::AppHandle, phase: &str, message: &str, current: Option<u32>, total: Option<u32>) {
+fn emit_progress(
+    app: &tauri::AppHandle,
+    phase: &str,
+    message: &str,
+    current: Option<u32>,
+    total: Option<u32>,
+) {
     let _ = app.emit(
         "transfer-progress",
         TransferProgress {
@@ -87,8 +97,8 @@ fn discover_volume_name(container_name: &str, mount_path: &str) -> Result<String
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let containers: Vec<serde_json::Value> =
-        serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse inspect output: {}", e))?;
+    let containers: Vec<serde_json::Value> = serde_json::from_str(&stdout)
+        .map_err(|e| format!("Failed to parse inspect output: {}", e))?;
 
     let container = containers
         .first()
@@ -133,7 +143,12 @@ fn discover_all_volumes() -> Result<Vec<(VolumeEntry, String)>, String> {
                 ));
             }
             Err(e) => {
-                log::warn!("Could not discover volume for {}/{}: {}", service, mount_path, e);
+                log::warn!(
+                    "Could not discover volume for {}/{}: {}",
+                    service,
+                    mount_path,
+                    e
+                );
                 // Non-fatal: skip volumes that don't exist (e.g., fresh install)
             }
         }
@@ -195,7 +210,13 @@ pub async fn export_clone(
     }
 
     // Step 1: Discover volumes while containers are still running
-    emit_progress(&app, "discovering", "Discovering Docker volumes...", None, None);
+    emit_progress(
+        &app,
+        "discovering",
+        "Discovering Docker volumes...",
+        None,
+        None,
+    );
 
     let volumes = discover_all_volumes()?;
     let volume_count = volumes.len() as u32;
@@ -207,12 +228,22 @@ pub async fn export_clone(
             app_state.port,
             app_state.tunnel_mode.clone(),
             app_state.tunnel_provider.as_str().to_string(),
-            app_state.providers_configured.iter().cloned().collect::<Vec<_>>(),
+            app_state
+                .providers_configured
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
         )
     };
 
     // Step 2: Stop stack for consistent backup
-    emit_progress(&app, "stopping", "Stopping services for consistent backup...", None, None);
+    emit_progress(
+        &app,
+        "stopping",
+        "Stopping services for consistent backup...",
+        None,
+        None,
+    );
 
     let stop_result = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "down"])
@@ -281,11 +312,16 @@ pub async fn export_clone(
 
         // Add install files
         let files_to_include = [
-            ("files/docker-compose.yml", install_path.join("docker-compose.yml")),
+            (
+                "files/docker-compose.yml",
+                install_path.join("docker-compose.yml"),
+            ),
             ("files/postiz.env", install_path.join("postiz.env")),
             (
                 "files/dynamicconfig/development-sql.yaml",
-                install_path.join("dynamicconfig").join("development-sql.yaml"),
+                install_path
+                    .join("dynamicconfig")
+                    .join("development-sql.yaml"),
             ),
         ];
 
@@ -305,7 +341,12 @@ pub async fn export_clone(
             emit_progress(
                 &app,
                 "backing_up",
-                &format!("Backing up volume: {} ({}/{})", entry.service, idx + 1, volume_count),
+                &format!(
+                    "Backing up volume: {} ({}/{})",
+                    entry.service,
+                    idx + 1,
+                    volume_count
+                ),
                 Some(idx as u32 + 1),
                 Some(volume_count),
             );
@@ -316,18 +357,29 @@ pub async fn export_clone(
             // Use docker run to tar the volume contents to a temp file on disk
             let output = silent_cmd("docker")
                 .args([
-                    "run", "--rm",
-                    "-v", &format!("{}:/source:ro", actual_name),
-                    "-v", &format!("{}:/backup", temp_dir.to_string_lossy()),
+                    "run",
+                    "--rm",
+                    "-v",
+                    &format!("{}:/source:ro", actual_name),
+                    "-v",
+                    &format!("{}:/backup", temp_dir.to_string_lossy()),
                     "alpine",
-                    "tar", "cf", &format!("/backup/{}", tar_name), "-C", "/source", ".",
+                    "tar",
+                    "cf",
+                    &format!("/backup/{}", tar_name),
+                    "-C",
+                    "/source",
+                    ".",
                 ])
                 .output()
                 .map_err(|e| format!("Failed to backup volume {}: {}", actual_name, e))?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!("Volume backup failed for {}: {}", actual_name, stderr));
+                return Err(format!(
+                    "Volume backup failed for {}: {}",
+                    actual_name, stderr
+                ));
             }
 
             // Stream from disk into the zip, then delete the temp tar
@@ -354,7 +406,8 @@ pub async fn export_clone(
 
     let mut encrypted = Vec::new();
     {
-        let encryptor = age::Encryptor::with_user_passphrase(age::secrecy::SecretString::from(password));
+        let encryptor =
+            age::Encryptor::with_user_passphrase(age::secrecy::SecretString::from(password));
         let mut writer = encryptor
             .wrap_output(&mut encrypted)
             .map_err(|e| format!("Failed to create age encryptor: {}", e))?;
@@ -367,8 +420,7 @@ pub async fn export_clone(
             .map_err(|e| format!("Failed to finalize encryption: {}", e))?;
     }
 
-    fs::write(&output_path, &encrypted)
-        .map_err(|e| format!("Failed to write archive: {}", e))?;
+    fs::write(&output_path, &encrypted).map_err(|e| format!("Failed to write archive: {}", e))?;
 
     emit_progress(&app, "restarting", "Restarting services...", None, None);
 
@@ -389,8 +441,7 @@ pub async fn validate_clone_file(
         return Err("Password must be at least 8 characters.".to_string());
     }
 
-    let encrypted = fs::read(&clone_path)
-        .map_err(|e| format!("Failed to read archive: {}", e))?;
+    let encrypted = fs::read(&clone_path).map_err(|e| format!("Failed to read archive: {}", e))?;
 
     let decryptor = age::Decryptor::new(&encrypted[..])
         .map_err(|e| format!("Invalid archive format: {}", e))?;
@@ -409,8 +460,8 @@ pub async fn validate_clone_file(
         .map_err(|e| format!("Failed to decrypt archive: {}", e))?;
 
     let cursor = std::io::Cursor::new(&decrypted);
-    let mut zip = zip::ZipArchive::new(cursor)
-        .map_err(|e| format!("Invalid archive contents: {}", e))?;
+    let mut zip =
+        zip::ZipArchive::new(cursor).map_err(|e| format!("Invalid archive contents: {}", e))?;
 
     let manifest_str = {
         let mut manifest_file = zip
@@ -423,8 +474,8 @@ pub async fn validate_clone_file(
         buf
     };
 
-    let manifest: CloneManifest = serde_json::from_str(&manifest_str)
-        .map_err(|e| format!("Invalid manifest: {}", e))?;
+    let manifest: CloneManifest =
+        serde_json::from_str(&manifest_str).map_err(|e| format!("Invalid manifest: {}", e))?;
 
     if manifest.format_version != 1 {
         return Err(format!(
@@ -486,14 +537,15 @@ pub async fn import_clone(
 
     // Preflight: install path
     if install_dir.join("docker-compose.yml").exists() {
-        return Err("An installation already exists at this path. Choose a different location.".to_string());
+        return Err(
+            "An installation already exists at this path. Choose a different location.".to_string(),
+        );
     }
 
     // Step 1: Decrypt
     emit_progress(&app, "decrypting", "Decrypting archive...", None, None);
 
-    let encrypted = fs::read(&clone_path)
-        .map_err(|e| format!("Failed to read archive: {}", e))?;
+    let encrypted = fs::read(&clone_path).map_err(|e| format!("Failed to read archive: {}", e))?;
 
     let decryptor = age::Decryptor::new(&encrypted[..])
         .map_err(|e| format!("Invalid archive format: {}", e))?;
@@ -512,28 +564,42 @@ pub async fn import_clone(
         .map_err(|e| format!("Failed to decrypt: {}", e))?;
 
     let cursor = std::io::Cursor::new(&decrypted);
-    let mut zip = zip::ZipArchive::new(cursor)
-        .map_err(|e| format!("Invalid archive: {}", e))?;
+    let mut zip = zip::ZipArchive::new(cursor).map_err(|e| format!("Invalid archive: {}", e))?;
 
     // Step 2: Read manifest
     let manifest: CloneManifest = {
-        let mut f = zip.by_name("manifest.json").map_err(|_| "Missing manifest.json".to_string())?;
+        let mut f = zip
+            .by_name("manifest.json")
+            .map_err(|_| "Missing manifest.json".to_string())?;
         let mut buf = String::new();
-        f.read_to_string(&mut buf).map_err(|e| format!("Failed to read manifest: {}", e))?;
+        f.read_to_string(&mut buf)
+            .map_err(|e| format!("Failed to read manifest: {}", e))?;
         serde_json::from_str(&buf).map_err(|e| format!("Invalid manifest: {}", e))?
     };
 
     if manifest.format_version != 1 {
-        return Err(format!("Unsupported archive version: {}", manifest.format_version));
+        return Err(format!(
+            "Unsupported archive version: {}",
+            manifest.format_version
+        ));
     }
 
     // Step 3: Extract env file and get postgres password
-    emit_progress(&app, "extracting", "Extracting configuration...", None, None);
+    emit_progress(
+        &app,
+        "extracting",
+        "Extracting configuration...",
+        None,
+        None,
+    );
 
     let env_contents = {
-        let mut f = zip.by_name("files/postiz.env").map_err(|_| "Missing postiz.env in archive".to_string())?;
+        let mut f = zip
+            .by_name("files/postiz.env")
+            .map_err(|_| "Missing postiz.env in archive".to_string())?;
         let mut buf = String::new();
-        f.read_to_string(&mut buf).map_err(|e| format!("Failed to read postiz.env: {}", e))?;
+        f.read_to_string(&mut buf)
+            .map_err(|e| format!("Failed to read postiz.env: {}", e))?;
         buf
     };
 
@@ -577,11 +643,20 @@ pub async fn import_clone(
     let dynconfig_dir = install_dir.join("dynamicconfig");
     fs::create_dir_all(&dynconfig_dir)
         .map_err(|e| format!("Failed to create dynamicconfig dir: {}", e))?;
-    fs::write(dynconfig_dir.join("development-sql.yaml"), DYNAMIC_CONFIG_TEMPLATE)
-        .map_err(|e| format!("Failed to write dynamic config: {}", e))?;
+    fs::write(
+        dynconfig_dir.join("development-sql.yaml"),
+        DYNAMIC_CONFIG_TEMPLATE,
+    )
+    .map_err(|e| format!("Failed to write dynamic config: {}", e))?;
 
     // Step 5: Pull images
-    emit_progress(&app, "pulling", "Pulling Docker images (this may take several minutes)...", None, None);
+    emit_progress(
+        &app,
+        "pulling",
+        "Pulling Docker images (this may take several minutes)...",
+        None,
+        None,
+    );
 
     let pull_output = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "pull"])
@@ -621,20 +696,26 @@ pub async fn import_clone(
         emit_progress(
             &app,
             "restoring",
-            &format!("Restoring volume: {} ({}/{})", volume_entry.service, idx + 1, volume_count),
+            &format!(
+                "Restoring volume: {} ({}/{})",
+                volume_entry.service,
+                idx + 1,
+                volume_count
+            ),
             Some(idx as u32 + 1),
             Some(volume_count),
         );
 
         // Find the new volume name by inspecting the new container
-        let new_volume_name = discover_volume_name(&volume_entry.service, &volume_entry.mount_path)?;
+        let new_volume_name =
+            discover_volume_name(&volume_entry.service, &volume_entry.mount_path)?;
 
         // Extract tar from zip to temp file
         let tar_zip_path = format!("volumes/{}", volume_entry.archive_name);
         let tar_bytes = {
-            let mut f = zip.by_name(&tar_zip_path).map_err(|_| {
-                format!("Missing {} in archive", tar_zip_path)
-            })?;
+            let mut f = zip
+                .by_name(&tar_zip_path)
+                .map_err(|_| format!("Missing {} in archive", tar_zip_path))?;
             let mut buf = Vec::new();
             f.read_to_end(&mut buf)
                 .map_err(|e| format!("Failed to read {}: {}", tar_zip_path, e))?;
@@ -648,19 +729,29 @@ pub async fn import_clone(
         // Restore into volume
         let output = silent_cmd("docker")
             .args([
-                "run", "--rm",
-                "-v", &format!("{}:/dest", new_volume_name),
-                "-v", &format!("{}:/backup:ro", temp_dir.to_string_lossy()),
+                "run",
+                "--rm",
+                "-v",
+                &format!("{}:/dest", new_volume_name),
+                "-v",
+                &format!("{}:/backup:ro", temp_dir.to_string_lossy()),
                 "alpine",
-                "sh", "-c",
-                &format!("rm -rf /dest/* && tar xf /backup/{} -C /dest", volume_entry.archive_name),
+                "sh",
+                "-c",
+                &format!(
+                    "rm -rf /dest/* && tar xf /backup/{} -C /dest",
+                    volume_entry.archive_name
+                ),
             ])
             .output()
             .map_err(|e| format!("Failed to restore volume {}: {}", new_volume_name, e))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("Volume restore failed for {}: {}", new_volume_name, stderr));
+            return Err(format!(
+                "Volume restore failed for {}: {}",
+                new_volume_name, stderr
+            ));
         }
 
         // Clean up tar temp file to save space
@@ -682,7 +773,13 @@ pub async fn import_clone(
     }
 
     // Step 9: Health check
-    emit_progress(&app, "health_check", "Waiting for services to become healthy...", None, None);
+    emit_progress(
+        &app,
+        "health_check",
+        "Waiting for services to become healthy...",
+        None,
+        None,
+    );
 
     let client = reqwest::Client::new();
     let mut healthy = false;
@@ -713,7 +810,10 @@ pub async fn import_clone(
     if !healthy {
         // Don't clean up — leave install in place so Recovery Center can handle it
         should_cleanup.store(false, std::sync::atomic::Ordering::Relaxed);
-        return Err("Health check timed out. Services may still be starting. Check the Recovery Center.".to_string());
+        return Err(
+            "Health check timed out. Services may still be starting. Check the Recovery Center."
+                .to_string(),
+        );
     }
 
     // Step 10: Update state
@@ -725,7 +825,8 @@ pub async fn import_clone(
         app_state.current_step = 3; // CreateWebLink
         app_state.transfer_review_pending = true;
         app_state.tunnel_mode = manifest.tunnel_mode.clone();
-        app_state.tunnel_provider = crate::state::TunnelProvider::from_str_loose(&manifest.tunnel_provider);
+        app_state.tunnel_provider =
+            crate::state::TunnelProvider::from_str_loose(&manifest.tunnel_provider);
 
         // Mark all imported providers as stale (callback URLs need updating)
         for provider in &manifest.providers_configured {
@@ -743,8 +844,7 @@ pub async fn import_clone(
     let pointer = serde_json::json!({ "install_path": install_path });
     let content = serde_json::to_string_pretty(&pointer).unwrap_or_default();
     let tmp = pointer_path.with_extension("tmp");
-    fs::write(&tmp, &content)
-        .map_err(|e| format!("Failed to write install pointer: {}", e))?;
+    fs::write(&tmp, &content).map_err(|e| format!("Failed to write install pointer: {}", e))?;
     fs::rename(&tmp, &pointer_path)
         .map_err(|e| format!("Failed to rename install pointer: {}", e))?;
 
@@ -756,4 +856,3 @@ pub async fn import_clone(
     // Return port as JSON so frontend can read the actual assigned port
     Ok(serde_json::json!({ "port": port }).to_string())
 }
-

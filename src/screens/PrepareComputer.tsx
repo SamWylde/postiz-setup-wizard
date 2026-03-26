@@ -176,21 +176,17 @@ export function PrepareComputer() {
               />
               <StatusIndicator
                 status={
-                  (machineState.cloudflared_installed || machineState.ngrok_installed ||
-                   machineState.zrok_installed || machineState.ssh_available)
+                  machineState.cloudflared_installed
                     ? "success"
                     : bootstrapStatus === "checking"
                       ? "loading"
                       : "warning"
                 }
-                label="Tunnel provider (optional)"
+                label="Cloudflared (optional)"
                 detail={
-                  [
-                    machineState.cloudflared_installed && "cloudflared",
-                    machineState.ngrok_installed && "ngrok",
-                    machineState.zrok_installed && "zrok",
-                    machineState.ssh_available && "SSH/Pinggy",
-                  ].filter(Boolean).join(", ") || "None installed — needed for web links"
+                  machineState.cloudflared_installed
+                    ? "cloudflared installed"
+                    : "Not installed — needed for Cloudflare Zero Trust tunnels"
                 }
               />
               <StatusIndicator

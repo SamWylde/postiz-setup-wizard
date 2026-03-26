@@ -5,6 +5,39 @@ use tauri::State;
 use super::{parse_docker_ps_json, silent_cmd};
 use crate::state::{InstallSnapshot, PreflightCheck, PreflightResult, SharedState};
 
+fn infer_tunnel_provider(
+    tunnel_mode: &str,
+    existing_provider: &str,
+    tunnel_pid: Option<u32>,
+    tunnel_config: Option<&str>,
+) -> String {
+    match tunnel_mode {
+        "temporary" => "cloudflared".to_string(),
+        "permanent" => {
+            let has_cloudflare_clue = tunnel_pid.is_some()
+                || tunnel_config
+                    .map(|config| !config.trim().is_empty())
+                    .unwrap_or(false);
+
+            if existing_provider == "manual" {
+                "manual".to_string()
+            } else if existing_provider == "cloudflared" && has_cloudflare_clue {
+                "cloudflared".to_string()
+            } else if has_cloudflare_clue {
+                "cloudflared".to_string()
+            } else {
+                // A disk-discovered permanent MAIN_URL does not encode whether it
+                // came from a manual reverse proxy or Cloudflare Zero Trust.
+                // When there is no tracked tunnel process/token, default to a
+                // manual domain so tray actions and saved state keep a usable URL.
+                "manual".to_string()
+            }
+        }
+        "none" => "manual".to_string(),
+        _ => existing_provider.to_string(),
+    }
+}
+
 #[tauri::command]
 pub async fn get_install_snapshot(
     state: State<'_, SharedState>,
@@ -17,6 +50,7 @@ pub async fn get_install_snapshot(
         last_error,
         tunnel_mode,
         tunnel_provider,
+        tunnel_config,
         permanent_domain,
         tunnel_pid,
         providers_configured,
@@ -30,6 +64,7 @@ pub async fn get_install_snapshot(
             s.last_error.clone(),
             s.tunnel_mode.clone(),
             s.tunnel_provider.as_str().to_string(),
+            s.tunnel_config.clone(),
             s.permanent_domain.clone(),
             s.tunnel_pid,
             s.providers_configured.iter().cloned().collect::<Vec<_>>(),
@@ -71,53 +106,63 @@ pub async fn get_install_snapshot(
         }
     });
 
-    // When we discovered an install from disk (no resume state loaded), read
-    // metadata from postiz.env so the snapshot reflects actual configuration
-    // instead of in-memory defaults.
-    let (port, tunnel_mode, permanent_domain, providers_configured, current_step) =
-        if discovered_from_disk {
-            if let Some(ref p) = install_path {
-                let env_info = read_env_metadata(p);
-                let inferred_port = env_info.port.unwrap_or(port);
-                let inferred_tunnel_mode = env_info.tunnel_mode.unwrap_or(tunnel_mode);
-                let inferred_permanent_domain = env_info.permanent_domain.or(permanent_domain);
-                let inferred_providers = if env_info.providers.is_empty() {
-                    providers_configured
-                } else {
-                    env_info.providers
-                };
-                // Infer how far the user got using only configuration found on
-                // disk. A public URL proves the web-link step was completed,
-                // but a default in-memory "none" tunnel mode should not be
-                // treated as proof that the user explicitly chose local-only.
-                let inferred_step = infer_discovered_step(
-                    &inferred_providers,
-                    env_info.public_url_configured || inferred_permanent_domain.is_some(),
-                );
-                (
-                    inferred_port,
-                    inferred_tunnel_mode,
-                    inferred_permanent_domain,
-                    inferred_providers,
-                    inferred_step,
-                )
-            } else {
-                (port, tunnel_mode, permanent_domain, providers_configured, current_step)
-            }
-        } else {
-            (port, tunnel_mode, permanent_domain, providers_configured, current_step)
-        };
+    // Read metadata from postiz.env whenever we can so snapshots follow the
+    // real install on disk, even if a previous UI flow persisted draft tunnel
+    // state before the change was actually applied.
+    let env_info = install_path.as_ref().map(|p| read_env_metadata(p));
 
-    // When discovered from disk (no resume state loaded), sync inferred
-    // values back to AppState so subsequent commands (e.g. update_base_urls)
-    // use the correct port instead of the default.
-    if discovered_from_disk {
-        if let Some(ref p) = install_path {
-            let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
-            s.install_path = Some(p.clone());
-            s.port = port;
-            s.tunnel_mode = tunnel_mode.clone();
-            s.permanent_domain = permanent_domain.clone();
+    let port = env_info.as_ref().and_then(|info| info.port).unwrap_or(port);
+    let tunnel_mode = env_info
+        .as_ref()
+        .and_then(|info| info.tunnel_mode.clone())
+        .unwrap_or(tunnel_mode);
+    let permanent_domain = env_info
+        .as_ref()
+        .and_then(|info| info.permanent_domain.clone())
+        .or(permanent_domain);
+    let tunnel_provider = infer_tunnel_provider(
+        &tunnel_mode,
+        &tunnel_provider,
+        tunnel_pid,
+        tunnel_config.as_deref(),
+    );
+    let providers_configured = if let Some(info) = env_info.as_ref() {
+        if info.providers.is_empty() {
+            providers_configured
+        } else {
+            info.providers.clone()
+        }
+    } else {
+        providers_configured
+    };
+    let current_step = if discovered_from_disk {
+        if let Some(info) = env_info.as_ref() {
+            infer_discovered_step(
+                &providers_configured,
+                info.public_url_configured || permanent_domain.is_some(),
+            )
+        } else {
+            current_step
+        }
+    } else {
+        current_step
+    };
+
+    // Sync inferred disk-backed values into AppState so subsequent commands use
+    // the actual install configuration rather than stale resume data.
+    if let Some(ref p) = install_path {
+        let mut s = state.lock().unwrap_or_else(|e| e.into_inner());
+        s.install_path = Some(p.clone());
+        s.port = port;
+        s.local_url = Some(format!("http://localhost:{}", port));
+        s.tunnel_mode = tunnel_mode.clone();
+        s.tunnel_provider = crate::state::TunnelProvider::from_str_loose(&tunnel_provider);
+        s.permanent_domain = permanent_domain.clone();
+        let configured_set = providers_configured.iter().cloned().collect();
+        s.providers_configured = configured_set;
+        s.stale_providers
+            .retain(|provider| providers_configured.iter().any(|p| p == provider));
+        if discovered_from_disk {
             s.current_step = current_step;
         }
     }
@@ -179,8 +224,7 @@ pub async fn get_install_snapshot(
             // unreliable (many containers don't have one, and even when they
             // do it can disagree with our own HTTP check).  We have a separate
             // postiz_responding check for the real health status.
-            all_healthy = !containers.is_empty()
-                && containers.iter().all(|c| c.state == "running");
+            all_healthy = !containers.is_empty() && containers.iter().all(|c| c.state == "running");
         }
     }
 
@@ -208,7 +252,11 @@ pub async fn get_install_snapshot(
         .unwrap_or(false);
 
     let tunnel_url = if tunnel_alive {
-        state.lock().unwrap_or_else(|e| e.into_inner()).tunnel_url.clone()
+        state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .tunnel_url
+            .clone()
     } else {
         None
     };
@@ -220,6 +268,28 @@ pub async fn get_install_snapshot(
     let running_but_unresponsive = docker_running && !containers.is_empty() && !postiz_responding;
     let recovery_available =
         install_exists && (has_staged_temp || has_unhealthy_containers || running_but_unresponsive);
+
+    // Derive web_link_* fields from tunnel_mode + tunnel_provider
+    let (web_link_kind, web_link_supported, web_link_reason) = match tunnel_mode.as_str() {
+        "none" => ("none".to_string(), true, None),
+        "permanent" => {
+            if tunnel_provider == "cloudflared" {
+                ("cloudflare".to_string(), true, None)
+            } else {
+                // "manual" or any legacy permanent provider → treat as custom domain
+                ("manual".to_string(), true, None)
+            }
+        }
+        "temporary" => (
+            "legacy_shared".to_string(),
+            false,
+            Some(
+                "Shared tunnel domains are no longer supported. Login does not work on these domains due to a known Postiz limitation. Please switch to a custom domain or Cloudflare Zero Trust."
+                    .to_string(),
+            ),
+        ),
+        _ => ("none".to_string(), true, None),
+    };
 
     Ok(InstallSnapshot {
         install_path: install_path_str,
@@ -236,6 +306,9 @@ pub async fn get_install_snapshot(
         tunnel_mode,
         tunnel_provider,
         permanent_domain,
+        web_link_kind,
+        web_link_supported,
+        web_link_reason,
         providers_configured,
         providers_stale,
         current_step,
@@ -417,26 +490,21 @@ pub async fn validate_preflight(
         },
     });
 
-    // 9. Tunnel provider check (only for temporary tunnel mode)
+    // 9. Tunnel provider check (only for legacy temporary tunnels)
     if tunnel_mode == "temporary" {
         let cf_installed = silent_cmd("cloudflared")
             .arg("--version")
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false);
-        let ngrok_installed = crate::commands::bootstrap::resolve_binary("ngrok") != "ngrok"
-            || silent_cmd("ngrok").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
-        let zrok_installed = crate::commands::bootstrap::resolve_binary("zrok") != "zrok"
-            || silent_cmd("zrok").arg("version").output().map(|o| o.status.success()).unwrap_or(false);
-        let ssh_available = silent_cmd("ssh").arg("-V").output().map(|o| o.status.success()).unwrap_or(false);
-        let any_provider = cf_installed || ngrok_installed || zrok_installed || ssh_available;
         checks.push(PreflightCheck {
             name: "Tunnel provider available".to_string(),
-            passed: any_provider,
-            message: if any_provider {
-                "At least one tunnel provider is available.".to_string()
+            passed: cf_installed,
+            message: if cf_installed {
+                "cloudflared is available.".to_string()
             } else {
-                "No tunnel provider found. Install cloudflared, ngrok, or zrok, or ensure SSH is available for Pinggy.".to_string()
+                "cloudflared not found. Install it to use a temporary Cloudflare tunnel."
+                    .to_string()
             },
         });
     }
@@ -547,10 +615,15 @@ fn read_env_metadata(install_path: &std::path::Path) -> EnvMetadata {
     }
 
     // Infer tunnel mode from MAIN_URL:
+    // - localhost/127.0.0.1 means the install is in local-only mode.
     // - A known ephemeral tunnel domain means the user completed the
     //   temporary-link step, even if the process is no longer running.
     // - Any other non-localhost HTTPS URL is treated as a permanent domain.
     let (tunnel_mode, permanent_domain, public_url_configured) = if let Some(ref url) = main_url {
+        let is_local = url.starts_with("http://localhost")
+            || url.starts_with("https://localhost")
+            || url.starts_with("http://127.0.0.1")
+            || url.starts_with("https://127.0.0.1");
         let is_ephemeral = url.contains("trycloudflare.com")
             || url.contains("ngrok-free.app")
             || url.contains("ngrok.io")
@@ -558,7 +631,9 @@ fn read_env_metadata(install_path: &std::path::Path) -> EnvMetadata {
             || url.contains(".pinggy.link")
             || url.contains(".pinggy.io");
         let is_public_https = url.starts_with("https://") && !url.contains("localhost");
-        if is_public_https && is_ephemeral {
+        if is_local {
+            (Some("none".to_string()), None, false)
+        } else if is_public_https && is_ephemeral {
             (Some("temporary".to_string()), None, true)
         } else if is_public_https {
             (Some("permanent".to_string()), Some(url.clone()), true)
@@ -637,17 +712,33 @@ mod tests {
     }
 
     #[test]
-    fn read_env_metadata_keeps_localhost_out_of_public_url_inference() {
+    fn read_env_metadata_treats_localhost_as_local_only() {
         let dir = make_temp_install_dir();
         fs::write(dir.join("postiz.env"), "MAIN_URL=http://localhost:4007\n")
             .expect("postiz.env should be written");
 
         let env = read_env_metadata(&dir);
 
-        assert_eq!(env.tunnel_mode, None);
+        assert_eq!(env.tunnel_mode.as_deref(), Some("none"));
         assert_eq!(env.permanent_domain, None);
         assert!(!env.public_url_configured);
 
         fs::remove_dir_all(&dir).expect("temp install dir should be removed");
+    }
+
+    #[test]
+    fn infer_tunnel_provider_defaults_disk_discovered_permanent_urls_to_manual() {
+        assert_eq!(
+            super::infer_tunnel_provider("permanent", "cloudflared", None, None),
+            "manual"
+        );
+        assert_eq!(
+            super::infer_tunnel_provider("permanent", "cloudflared", Some(123), None),
+            "cloudflared"
+        );
+        assert_eq!(
+            super::infer_tunnel_provider("temporary", "manual", None, None),
+            "cloudflared"
+        );
     }
 }

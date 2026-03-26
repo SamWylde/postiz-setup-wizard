@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { updateStep, saveResumeState, syncProviderStatus, syncTunnelConfig } from "../lib/tauri";
+import { updateStep, saveResumeState, syncProviderStatus } from "../lib/tauri";
 
 /** Fire-and-forget persistence — log errors instead of silently swallowing them. */
 const persist = (p: Promise<unknown>) =>
@@ -12,8 +12,6 @@ export interface MachineState {
   docker_running: boolean;
   docker_linux_mode: boolean;
   cloudflared_installed: boolean;
-  ngrok_installed: boolean;
-  zrok_installed: boolean;
   ssh_available: boolean;
   disk_space_gb: number;
   ram_available_gb: number;
@@ -66,7 +64,7 @@ export interface WizardState {
   tunnelStatus: "idle" | "starting" | "running" | "restarting" | "error";
   tunnelUrl: string | null;
   tunnelMode: "temporary" | "permanent" | "none";
-  tunnelProvider: "cloudflared" | "ngrok" | "zrok" | "pinggy";
+  tunnelProvider: "cloudflared" | "manual";
   tunnelConfig: string;
   permanentDomain: string;
   remoteReachable: boolean;
@@ -172,34 +170,13 @@ export const useWizardStore = create<WizardState>((set) => ({
   setAccountCreated: (accountCreated) => set({ accountCreated }),
   setTunnelStatus: (tunnelStatus) => set({ tunnelStatus }),
   setTunnelUrl: (tunnelUrl) => set({ tunnelUrl }),
-  setTunnelMode: (tunnelMode) => {
-    set((state) => {
-      persist(syncTunnelConfig(tunnelMode, state.permanentDomain || null, state.tunnelProvider, state.tunnelConfig || null)
-        .then(() => saveResumeState()));
-      return { tunnelMode };
-    });
-  },
-  setTunnelProvider: (tunnelProvider) => {
-    set((state) => {
-      persist(syncTunnelConfig(state.tunnelMode, state.permanentDomain || null, tunnelProvider, state.tunnelConfig || null)
-        .then(() => saveResumeState()));
-      return { tunnelProvider };
-    });
-  },
-  setTunnelConfig: (tunnelConfig) => {
-    set((state) => {
-      persist(syncTunnelConfig(state.tunnelMode, state.permanentDomain || null, state.tunnelProvider, tunnelConfig || null)
-        .then(() => saveResumeState()));
-      return { tunnelConfig };
-    });
-  },
-  setPermanentDomain: (permanentDomain) => {
-    set((state) => {
-      persist(syncTunnelConfig(state.tunnelMode, permanentDomain || null, state.tunnelProvider, state.tunnelConfig || null)
-        .then(() => saveResumeState()));
-      return { permanentDomain };
-    });
-  },
+  // Tunnel and domain inputs are draft UI state until a backend command succeeds.
+  // Persisting them on every keystroke caused resume state to drift away from the
+  // actual install when users cancelled or backed out midway through changes.
+  setTunnelMode: (tunnelMode) => set({ tunnelMode }),
+  setTunnelProvider: (tunnelProvider) => set({ tunnelProvider }),
+  setTunnelConfig: (tunnelConfig) => set({ tunnelConfig }),
+  setPermanentDomain: (permanentDomain) => set({ permanentDomain }),
   setRemoteReachable: (remoteReachable) => set({ remoteReachable }),
   setProviderStatus: (provider, status) => {
     set((state) => {

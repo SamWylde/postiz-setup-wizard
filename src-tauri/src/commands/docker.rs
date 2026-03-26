@@ -111,7 +111,10 @@ pub async fn start_stack(
 
     // Store PID for cancel support
     let pid = child.id();
-    state.lock().unwrap_or_else(|e| e.into_inner()).docker_child_pid = Some(pid);
+    state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .docker_child_pid = Some(pid);
 
     // Stream stderr for progress, parsing pull progress lines
     if let Some(stderr) = child.stderr.take() {
@@ -163,7 +166,8 @@ pub async fn start_stack(
 
                     // Compute and emit structured pull progress
                     let total_layers = layer_states.len();
-                    let completed_layers = layer_states.values()
+                    let completed_layers = layer_states
+                        .values()
                         .filter(|a| *a == "Pull complete" || *a == "Already exists")
                         .count();
 
@@ -174,7 +178,8 @@ pub async fn start_stack(
                             *action_counts.entry(a.as_str()).or_insert(0) += 1;
                         }
                     }
-                    let summary_parts: Vec<String> = action_counts.iter()
+                    let summary_parts: Vec<String> = action_counts
+                        .iter()
                         .map(|(a, c)| format!("{} {} layers", a, c))
                         .collect();
                     let summary = if summary_parts.is_empty() {
@@ -187,24 +192,33 @@ pub async fn start_stack(
                     let progress_msg = if completed_layers == total_layers {
                         format!("All {} layers complete", total_layers)
                     } else if action_counts.get("Extracting").copied().unwrap_or(0) > 0 {
-                        format!("Extracting layers ({}/{} complete)...", completed_layers, total_layers)
+                        format!(
+                            "Extracting layers ({}/{} complete)...",
+                            completed_layers, total_layers
+                        )
                     } else {
-                        format!("Pulling layers ({}/{} complete)...", completed_layers, total_layers)
+                        format!(
+                            "Pulling layers ({}/{} complete)...",
+                            completed_layers, total_layers
+                        )
                     };
 
                     // Only emit structured progress on action changes or terminal states
                     if action_changed || is_terminal {
                         let _ = app_clone.emit("docker-progress", &progress_msg);
-                        let _ = app_clone.emit("docker-pull-progress", PullProgress {
-                            total_layers,
-                            completed_layers,
-                            message: if summary.is_empty() {
-                                progress_msg.clone()
-                            } else {
-                                format!("{} ({})", progress_msg, summary)
+                        let _ = app_clone.emit(
+                            "docker-pull-progress",
+                            PullProgress {
+                                total_layers,
+                                completed_layers,
+                                message: if summary.is_empty() {
+                                    progress_msg.clone()
+                                } else {
+                                    format!("{} ({})", progress_msg, summary)
+                                },
+                                completed_services: completed_services.clone(),
                             },
-                            completed_services: completed_services.clone(),
-                        });
+                        );
                     }
                 } else {
                     // Non-layer line: always emit to log
@@ -234,11 +248,17 @@ pub async fn start_stack(
     }
 
     let status = child.wait().map_err(|e| {
-        state.lock().unwrap_or_else(|e| e.into_inner()).docker_child_pid = None;
+        state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .docker_child_pid = None;
         format!("Docker pull failed: {}", e)
     })?;
 
-    state.lock().unwrap_or_else(|e| e.into_inner()).docker_child_pid = None;
+    state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .docker_child_pid = None;
 
     if !status.success() {
         return Err(
@@ -252,7 +272,13 @@ pub async fn start_stack(
     // Clean up stale containers from a previous failed run to avoid
     // "container name already in use" errors on retry/reinstall.
     let _ = silent_cmd("docker")
-        .args(["compose", "--env-file", "postiz.env", "down", "--remove-orphans"])
+        .args([
+            "compose",
+            "--env-file",
+            "postiz.env",
+            "down",
+            "--remove-orphans",
+        ])
         .current_dir(&install_path)
         .output();
 
@@ -294,7 +320,10 @@ pub async fn start_stack(
 
         if conflicts.is_empty() || attempt == max_attempts - 1 {
             // Not a container conflict or out of retries — report the real error
-            let _ = app.emit("docker-log", sanitize_log_line(&format!("Start error: {}", stderr)));
+            let _ = app.emit(
+                "docker-log",
+                sanitize_log_line(&format!("Start error: {}", stderr)),
+            );
             return Err(
                 "Failed to start Postiz services. See Technical Details for more information."
                     .to_string(),
@@ -303,7 +332,10 @@ pub async fn start_stack(
 
         let _ = app.emit(
             "docker-progress",
-            &format!("Removing {} conflicting container(s) from a previous install...", conflicts.len()),
+            &format!(
+                "Removing {} conflicting container(s) from a previous install...",
+                conflicts.len()
+            ),
         );
         for container_id in &conflicts {
             let _ = silent_cmd("docker")
@@ -340,9 +372,9 @@ pub async fn get_stack_status(
         .collect();
 
     let all_healthy = !containers.is_empty()
-        && containers.iter().all(|c| {
-            c.state == "running" && (c.health.is_empty() || c.health == "healthy")
-        });
+        && containers
+            .iter()
+            .all(|c| c.state == "running" && (c.health.is_empty() || c.health == "healthy"));
 
     let port = state.lock().unwrap_or_else(|e| e.into_inner()).port;
     let postiz_responding = reqwest::Client::new()
@@ -425,7 +457,10 @@ pub fn cancel_install(state: State<SharedState>) -> Result<String, String> {
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .output();
 
-        state.lock().unwrap_or_else(|e| e.into_inner()).docker_child_pid = None;
+        state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .docker_child_pid = None;
 
         Ok("Installation cancelled.".to_string())
     } else {
@@ -473,7 +508,10 @@ pub async fn restart_and_verify(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let _ = app.emit("docker-progress", format!("Warning: docker compose down had issues: {}", stderr));
+        let _ = app.emit(
+            "docker-progress",
+            format!("Warning: docker compose down had issues: {}", stderr),
+        );
     }
 
     // Run docker compose up (cancellable — run_docker_compose checks the flag)
@@ -490,7 +528,10 @@ pub async fn restart_and_verify(
         return Err(format!("Failed to start stack: {}", stderr));
     }
 
-    let _ = app.emit("docker-progress", "Services started. Polling health checks...");
+    let _ = app.emit(
+        "docker-progress",
+        "Services started. Polling health checks...",
+    );
 
     // Get port from state
     let port = state.lock().unwrap_or_else(|e| e.into_inner()).port;
@@ -522,7 +563,10 @@ pub async fn restart_and_verify(
         if let Ok(ps_out) = &ps_output {
             let stdout = String::from_utf8_lossy(&ps_out.stdout);
             let entries = parse_docker_ps_json(&stdout);
-            let running = entries.iter().filter(|v| v["State"].as_str() == Some("running")).count();
+            let running = entries
+                .iter()
+                .filter(|v| v["State"].as_str() == Some("running"))
+                .count();
             let total = entries.len();
 
             // Early exit if a core container crashed
@@ -540,7 +584,10 @@ pub async fn restart_and_verify(
 
             let _ = app.emit(
                 "docker-progress",
-                format!("{}/{} containers running (attempt {}/40)", running, total, attempt),
+                format!(
+                    "{}/{} containers running (attempt {}/40)",
+                    running, total, attempt
+                ),
             );
         } else {
             let _ = app.emit(
@@ -564,7 +611,10 @@ pub async fn restart_and_verify(
         }
     }
 
-    Err("Postiz didn't respond after 2 minutes. Check Docker Desktop for container issues.".to_string())
+    Err(
+        "Postiz didn't respond after 2 minutes. Check Docker Desktop for container issues."
+            .to_string(),
+    )
 }
 
 #[tauri::command]

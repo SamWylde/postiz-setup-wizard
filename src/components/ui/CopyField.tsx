@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Copy, Check, ExternalLink } from "lucide-react";
+import { Copy, Check, ExternalLink, Eye, EyeOff } from "lucide-react";
 import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { open } from "@tauri-apps/plugin-shell";
 
@@ -7,11 +7,15 @@ interface CopyFieldProps {
   value: string;
   label?: string;
   openable?: boolean;
+  secret?: boolean;
 }
 
-export function CopyField({ value, label, openable }: CopyFieldProps) {
+export function CopyField({ value, label, openable, secret = false }: CopyFieldProps) {
   const isUrl = openable ?? value.startsWith("http");
   const [copied, setCopied] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  const displayValue =
+    secret && !revealed ? "•".repeat(Math.max(value.length, 8)) : value;
 
   const handleCopy = async () => {
     try {
@@ -38,8 +42,21 @@ export function CopyField({ value, label, openable }: CopyFieldProps) {
       )}
       <div className="flex items-center gap-2">
         <div className="flex-1 rounded-lg border border-gray-300 bg-gray-50 px-3 py-2 text-sm font-mono text-gray-900 select-all overflow-x-auto">
-          {value}
+          {displayValue}
         </div>
+        {secret && (
+          <button
+            onClick={() => setRevealed((prev) => !prev)}
+            className="shrink-0 rounded-lg border border-gray-300 p-2 text-gray-500 hover:bg-gray-50 hover:text-gray-700 transition-colors"
+            title={revealed ? "Hide value" : "Show value"}
+          >
+            {revealed ? (
+              <EyeOff className="h-4 w-4" />
+            ) : (
+              <Eye className="h-4 w-4" />
+            )}
+          </button>
+        )}
         {isUrl && (
           <button
             onClick={() => open(value)}

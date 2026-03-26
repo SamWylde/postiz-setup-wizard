@@ -27,15 +27,14 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, Strin
 
     let _ = app.emit("update-status", "checking");
 
-    let updater = app.updater().map_err(|e| format!("Updater not available: {}", e))?;
+    let updater = app
+        .updater()
+        .map_err(|e| format!("Updater not available: {}", e))?;
 
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| {
-            let _ = app.emit("update-status", "error");
-            format!("Failed to check for updates: {}", e)
-        })?;
+    let update = updater.check().await.map_err(|e| {
+        let _ = app.emit("update-status", "error");
+        format!("Failed to check for updates: {}", e)
+    })?;
 
     match update {
         Some(update) => {
@@ -61,7 +60,10 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, Strin
 
 #[tauri::command]
 pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
-    if UPDATING.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).is_err() {
+    if UPDATING
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
         return Err("Update already in progress".to_string());
     }
 
@@ -72,13 +74,10 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
         format!("Updater not available: {}", e)
     })?;
 
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| {
-            UPDATING.store(false, Ordering::SeqCst);
-            format!("Failed to check for updates: {}", e)
-        })?;
+    let update = updater.check().await.map_err(|e| {
+        UPDATING.store(false, Ordering::SeqCst);
+        format!("Failed to check for updates: {}", e)
+    })?;
 
     let update = update.ok_or_else(|| {
         UPDATING.store(false, Ordering::SeqCst);

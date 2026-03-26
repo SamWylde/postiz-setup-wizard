@@ -46,7 +46,6 @@ export function InstallPostiz() {
     installError,
     port,
     setPort,
-    tunnelMode,
     dockerLogs,
     addDockerLog,
     setStep,
@@ -132,7 +131,9 @@ export function InstallPostiz() {
       // Run preflight validation in strict mode — the backend will only allow
       // existing files at the install path when a .tmp staging folder proves
       // this wizard created the partial state (i.e. a failed install retry).
-      const preflight = await validatePreflight(installPath, port, tunnelMode, false);
+      // Web-link decisions happen later in the wizard, so install preflight
+      // should validate only what is required to get Postiz running locally.
+      const preflight = await validatePreflight(installPath, port, "none", false);
       if (cancelledRef.current) return;
       if (!preflight.ok) {
         const failedChecks = preflight.checks.filter((c) => !c.passed);

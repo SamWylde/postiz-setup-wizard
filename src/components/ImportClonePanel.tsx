@@ -6,6 +6,7 @@ import {
   getDefaultInstallPath,
   onTransferProgress,
   saveResumeState,
+  parseTunnelProvider,
   type CloneManifest,
   type TransferProgress,
 } from "../lib/tauri";
@@ -114,7 +115,7 @@ export function ImportClonePanel({ onCancel }: ImportClonePanelProps) {
           setTunnelMode(manifest.tunnel_mode as "temporary" | "permanent" | "none");
         }
         if (manifest.tunnel_provider) {
-          setTunnelProvider(manifest.tunnel_provider as "cloudflared" | "ngrok" | "zrok" | "pinggy");
+          setTunnelProvider(parseTunnelProvider(manifest.tunnel_provider));
         }
         // Mark all imported providers as stale — user needs to update redirect URLs
         for (const id of manifest.providers_configured) {

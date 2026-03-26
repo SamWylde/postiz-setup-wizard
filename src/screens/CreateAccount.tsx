@@ -1,6 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useWizardStore } from "../store/wizardStore";
-import { getStackStatus } from "../lib/tauri";
+import {
+  getStackStatus,
+  savePostizCredentials,
+  getPostizCredentials,
+  saveResumeState,
+} from "../lib/tauri";
 import { open } from "@tauri-apps/plugin-shell";
 import { Card } from "../components/ui/Card";
 import { Button } from "../components/ui/Button";
@@ -25,8 +30,23 @@ export function CreateAccount() {
   const [verifying, setVerifying] = useState(false);
   const [healthTimedOut, setHealthTimedOut] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [credEmail, setCredEmail] = useState("");
+  const [credPassword, setCredPassword] = useState("");
+  const [credsSaved, setCredsSaved] = useState(false);
+  const credsLoaded = useRef(false);
 
   const localUrl = `http://localhost:${port}`;
+
+  // Load any previously saved credentials
+  useEffect(() => {
+    if (credsLoaded.current) return;
+    credsLoaded.current = true;
+    getPostizCredentials().then(([email, password]) => {
+      setCredEmail(email ?? "");
+      setCredPassword(password ?? "");
+      setCredsSaved(Boolean(email && password));
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -156,16 +176,65 @@ export function CreateAccount() {
                 </ol>
               </div>
 
-              <Button
-                variant={accountCreated ? "ghost" : "secondary"}
-                onClick={handleAccountCreated}
-                loading={verifying}
-                disabled={accountCreated}
-              >
-                {accountCreated
-                  ? "Ready to continue"
-                  : "I've created my account — continue"}
-              </Button>
+              {!accountCreated && (
+                <Button
+                  variant="secondary"
+                  onClick={handleAccountCreated}
+                  loading={verifying}
+                >
+                  I've created my account — continue
+                </Button>
+              )}
+
+              {accountCreated && (
+                <div className="bg-green-50 rounded-lg border border-green-200 p-4 space-y-3">
+                  <p className="text-sm font-medium text-green-800">
+                    Save your login credentials
+                  </p>
+                  <p className="text-sm text-green-700">
+                    Enter the email and password you just used to create your
+                    Postiz account. We'll save them encrypted on this computer so you can easily
+                    copy them later (e.g. when the URL changes).
+                  </p>
+                  <input
+                    type="email"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    placeholder="Email"
+                    value={credEmail}
+                    onChange={(e) => {
+                      setCredEmail(e.target.value);
+                      if (credsSaved) setCredsSaved(false);
+                    }}
+                  />
+                  <input
+                    type="password"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    placeholder="Password"
+                    value={credPassword}
+                    onChange={(e) => {
+                      setCredPassword(e.target.value);
+                      if (credsSaved) setCredsSaved(false);
+                    }}
+                  />
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="secondary"
+                      disabled={!credEmail.trim() || !credPassword.trim() || credsSaved}
+                      onClick={async () => {
+                        await savePostizCredentials(credEmail.trim(), credPassword.trim());
+                        await saveResumeState();
+                        setCredsSaved(true);
+                        showToast("Credentials saved securely on this computer", "success");
+                      }}
+                    >
+                      {credsSaved ? "Saved" : "Save Credentials"}
+                    </Button>
+                    {!credsSaved && (
+                      <span className="text-xs text-gray-500">Optional — you can skip this</span>
+                    )}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>

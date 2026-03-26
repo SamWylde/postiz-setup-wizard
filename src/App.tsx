@@ -103,9 +103,21 @@ function App() {
       // If snapshot discovered an install but resume state was missing/incomplete,
       // populate the store from the snapshot so the app can route correctly
       if (!resume && snap.install_path) {
+        const providers: Record<string, import("./store/wizardStore").ProviderStatus> = {};
+        for (const id of snap.providers_configured) {
+          providers[id] = "configured";
+        }
+        for (const id of snap.providers_stale) {
+          providers[id] = "stale";
+        }
+
         hydrateFromResume({
           installPath: snap.install_path,
           port: snap.port,
+          tunnelMode: snap.tunnel_mode as "temporary" | "permanent" | "none",
+          permanentDomain: snap.permanent_domain || undefined,
+          tunnelProvider: parseTunnelProvider(snap.tunnel_provider),
+          providers,
         });
       }
 

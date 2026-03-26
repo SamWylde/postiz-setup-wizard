@@ -34,12 +34,11 @@ pub async fn check_postiz_update(
         .map_err(|e| format!("Failed to inspect local image: {}", e))?;
 
     let local_digest = if local_output.status.success() {
-        let raw = String::from_utf8_lossy(&local_output.stdout).trim().to_string();
+        let raw = String::from_utf8_lossy(&local_output.stdout)
+            .trim()
+            .to_string();
         // RepoDigests format: "ghcr.io/gitroomhq/postiz-app@sha256:abc123..."
-        raw.split('@')
-            .nth(1)
-            .unwrap_or("unknown")
-            .to_string()
+        raw.split('@').nth(1).unwrap_or("unknown").to_string()
     } else {
         "not-installed".to_string()
     };
@@ -143,10 +142,13 @@ pub async fn upgrade_postiz(
     let rollback_tag = "ghcr.io/gitroomhq/postiz-app:rollback";
 
     // Phase 0: Capture current image ID and create rollback tag
-    let _ = app.emit("upgrade-progress", serde_json::json!({
-        "phase": "snapshot",
-        "message": "Saving current image as rollback snapshot..."
-    }));
+    let _ = app.emit(
+        "upgrade-progress",
+        serde_json::json!({
+            "phase": "snapshot",
+            "message": "Saving current image as rollback snapshot..."
+        }),
+    );
 
     let inspect_output = silent_cmd("docker")
         .args(["image", "inspect", image, "--format", "{{.Id}}"])
@@ -154,7 +156,9 @@ pub async fn upgrade_postiz(
         .map_err(|e| format!("Failed to inspect current image: {}", e))?;
 
     let current_image_id = if inspect_output.status.success() {
-        String::from_utf8_lossy(&inspect_output.stdout).trim().to_string()
+        String::from_utf8_lossy(&inspect_output.stdout)
+            .trim()
+            .to_string()
     } else {
         return Err("Cannot determine current Postiz image ID. Is Postiz installed?".to_string());
     };
@@ -170,10 +174,13 @@ pub async fn upgrade_postiz(
     }
 
     // Phase 1: Pull only the postiz service image
-    let _ = app.emit("upgrade-progress", serde_json::json!({
-        "phase": "pulling",
-        "message": "Downloading updated Postiz app image..."
-    }));
+    let _ = app.emit(
+        "upgrade-progress",
+        serde_json::json!({
+            "phase": "pulling",
+            "message": "Downloading updated Postiz app image..."
+        }),
+    );
 
     let mut child = silent_cmd("docker")
         .args(["compose", "--env-file", "postiz.env", "pull", "postiz"])
@@ -181,9 +188,7 @@ pub async fn upgrade_postiz(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|_| {
-            "Could not start Docker. Make sure Docker Desktop is running.".to_string()
-        })?;
+        .map_err(|_| "Could not start Docker. Make sure Docker Desktop is running.".to_string())?;
 
     // Stream stderr
     if let Some(stderr) = child.stderr.take() {
@@ -191,10 +196,13 @@ pub async fn upgrade_postiz(
         std::thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines().map_while(Result::ok) {
-                let _ = app_clone.emit("upgrade-progress", serde_json::json!({
-                    "phase": "pulling",
-                    "message": line
-                }));
+                let _ = app_clone.emit(
+                    "upgrade-progress",
+                    serde_json::json!({
+                        "phase": "pulling",
+                        "message": line
+                    }),
+                );
             }
         });
     }
@@ -205,10 +213,13 @@ pub async fn upgrade_postiz(
         std::thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
-                let _ = app_clone.emit("upgrade-progress", serde_json::json!({
-                    "phase": "pulling",
-                    "message": line
-                }));
+                let _ = app_clone.emit(
+                    "upgrade-progress",
+                    serde_json::json!({
+                        "phase": "pulling",
+                        "message": line
+                    }),
+                );
             }
         });
     }
@@ -220,17 +231,30 @@ pub async fn upgrade_postiz(
     if !status.success() {
         // Clean up rollback tag on pull failure
         let _ = silent_cmd("docker").args(["rmi", rollback_tag]).output();
-        return Err("Failed to pull updated Postiz image. Check your internet connection.".to_string());
+        return Err(
+            "Failed to pull updated Postiz image. Check your internet connection.".to_string(),
+        );
     }
 
     // Phase 2: Recreate only the postiz container (no-deps keeps other services untouched)
-    let _ = app.emit("upgrade-progress", serde_json::json!({
-        "phase": "restarting",
-        "message": "Recreating Postiz app container..."
-    }));
+    let _ = app.emit(
+        "upgrade-progress",
+        serde_json::json!({
+            "phase": "restarting",
+            "message": "Recreating Postiz app container..."
+        }),
+    );
 
     let up_output = silent_cmd("docker")
-        .args(["compose", "--env-file", "postiz.env", "up", "-d", "--no-deps", "postiz"])
+        .args([
+            "compose",
+            "--env-file",
+            "postiz.env",
+            "up",
+            "-d",
+            "--no-deps",
+            "postiz",
+        ])
         .current_dir(&path)
         .output()
         .map_err(|e| format!("Failed to recreate postiz container: {}", e))?;
@@ -238,24 +262,43 @@ pub async fn upgrade_postiz(
     if !up_output.status.success() {
         let stderr = String::from_utf8_lossy(&up_output.stderr);
         // Attempt rollback
-        let _ = app.emit("upgrade-progress", serde_json::json!({
-            "phase": "rollback",
-            "message": "Container recreation failed — rolling back..."
-        }));
-        let _ = silent_cmd("docker").args(["tag", rollback_tag, image]).output();
+        let _ = app.emit(
+            "upgrade-progress",
+            serde_json::json!({
+                "phase": "rollback",
+                "message": "Container recreation failed — rolling back..."
+            }),
+        );
         let _ = silent_cmd("docker")
-            .args(["compose", "--env-file", "postiz.env", "up", "-d", "--no-deps", "postiz"])
+            .args(["tag", rollback_tag, image])
+            .output();
+        let _ = silent_cmd("docker")
+            .args([
+                "compose",
+                "--env-file",
+                "postiz.env",
+                "up",
+                "-d",
+                "--no-deps",
+                "postiz",
+            ])
             .current_dir(&path)
             .output();
         let _ = silent_cmd("docker").args(["rmi", rollback_tag]).output();
-        return Err(format!("Failed to start updated Postiz container (rolled back): {}", stderr));
+        return Err(format!(
+            "Failed to start updated Postiz container (rolled back): {}",
+            stderr
+        ));
     }
 
     // Phase 3: Health checks — poll for healthy + responding
-    let _ = app.emit("upgrade-progress", serde_json::json!({
-        "phase": "health-checks",
-        "message": "Waiting for Postiz app to become healthy..."
-    }));
+    let _ = app.emit(
+        "upgrade-progress",
+        serde_json::json!({
+            "phase": "health-checks",
+            "message": "Waiting for Postiz app to become healthy..."
+        }),
+    );
 
     let port = state.lock().unwrap_or_else(|e| e.into_inner()).port;
     let client = reqwest::Client::new();
@@ -264,10 +307,13 @@ pub async fn upgrade_postiz(
     for attempt in 1..=40 {
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
-        let _ = app.emit("upgrade-progress", serde_json::json!({
-            "phase": "health-checks",
-            "message": format!("Health check {}/40...", attempt)
-        }));
+        let _ = app.emit(
+            "upgrade-progress",
+            serde_json::json!({
+                "phase": "health-checks",
+                "message": format!("Health check {}/40...", attempt)
+            }),
+        );
 
         // Check all containers are still running
         let ps_output = silent_cmd("docker")
@@ -314,22 +360,38 @@ pub async fn upgrade_postiz(
     if healthy {
         // Success — clean up rollback tag
         let _ = silent_cmd("docker").args(["rmi", rollback_tag]).output();
-        let _ = app.emit("upgrade-progress", serde_json::json!({
-            "phase": "complete",
-            "message": "Upgrade complete! Postiz app is healthy."
-        }));
+        let _ = app.emit(
+            "upgrade-progress",
+            serde_json::json!({
+                "phase": "complete",
+                "message": "Upgrade complete! Postiz app is healthy."
+            }),
+        );
         return Ok("Postiz app upgraded successfully.".to_string());
     }
 
     // Health checks failed — roll back
-    let _ = app.emit("upgrade-progress", serde_json::json!({
-        "phase": "rollback",
-        "message": "Health checks failed — rolling back to previous version..."
-    }));
+    let _ = app.emit(
+        "upgrade-progress",
+        serde_json::json!({
+            "phase": "rollback",
+            "message": "Health checks failed — rolling back to previous version..."
+        }),
+    );
 
-    let _ = silent_cmd("docker").args(["tag", rollback_tag, image]).output();
     let _ = silent_cmd("docker")
-        .args(["compose", "--env-file", "postiz.env", "up", "-d", "--no-deps", "postiz"])
+        .args(["tag", rollback_tag, image])
+        .output();
+    let _ = silent_cmd("docker")
+        .args([
+            "compose",
+            "--env-file",
+            "postiz.env",
+            "up",
+            "-d",
+            "--no-deps",
+            "postiz",
+        ])
         .current_dir(&path)
         .output();
     let _ = silent_cmd("docker").args(["rmi", rollback_tag]).output();
