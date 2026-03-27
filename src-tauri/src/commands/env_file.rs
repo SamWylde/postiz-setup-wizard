@@ -376,3 +376,39 @@ pub(super) fn write_local_base_urls(env_path: &Path, port: u16) -> Result<(), St
     updates.insert("NEXT_PUBLIC_BACKEND_URL".into(), format!("{}/api", base));
     write_env_file(env_path, &updates)
 }
+
+pub(super) fn write_wizard_web_link_mode(env_path: &Path, mode: &str) -> Result<(), String> {
+    let mut updates = HashMap::new();
+    updates.insert("POSTIZ_WIZARD_WEB_LINK_MODE".into(), mode.to_string());
+    write_env_file(env_path, &updates)
+}
+
+pub(super) fn write_cloudflare_r2_storage(
+    env_path: &Path,
+    account_id: &str,
+    access_key: &str,
+    secret_access_key: &str,
+    bucket_name: &str,
+    bucket_url: &str,
+    region: &str,
+) -> Result<(), String> {
+    let mut updates = HashMap::new();
+    updates.insert("STORAGE_PROVIDER".into(), "cloudflare".to_string());
+    updates.insert("CLOUDFLARE_ACCOUNT_ID".into(), account_id.to_string());
+    updates.insert("CLOUDFLARE_ACCESS_KEY".into(), access_key.to_string());
+    updates.insert(
+        "CLOUDFLARE_SECRET_ACCESS_KEY".into(),
+        secret_access_key.to_string(),
+    );
+    updates.insert("CLOUDFLARE_BUCKETNAME".into(), bucket_name.to_string());
+    updates.insert("CLOUDFLARE_BUCKET_URL".into(), bucket_url.to_string());
+    updates.insert(
+        "CLOUDFLARE_REGION".into(),
+        if region.trim().is_empty() {
+            "auto".to_string()
+        } else {
+            region.trim().to_string()
+        },
+    );
+    write_env_file(env_path, &updates)
+}

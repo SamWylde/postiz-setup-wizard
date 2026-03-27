@@ -424,7 +424,26 @@ export function getHomepageUrl(
 
 export function getAppDomain(baseUrl: string): string {
   try {
-    return new URL(baseUrl).hostname;
+    const hostname = new URL(baseUrl).hostname;
+    if (
+      hostname === "localhost" ||
+      /^(\d{1,3}\.){3}\d{1,3}$/.test(hostname)
+    ) {
+      return hostname;
+    }
+
+    const parts = hostname.split(".").filter(Boolean);
+    if (parts.length <= 2) {
+      return hostname;
+    }
+
+    const last = parts[parts.length - 1];
+    const secondLast = parts[parts.length - 2];
+    if (parts.length >= 3 && last.length === 2 && secondLast.length <= 3) {
+      return parts.slice(-3).join(".");
+    }
+
+    return parts.slice(-2).join(".");
   } catch {
     return "";
   }

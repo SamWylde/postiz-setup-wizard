@@ -17,7 +17,7 @@ export interface InstallSnapshot {
   tunnel_mode: string;
   tunnel_provider: string;
   permanent_domain: string | null;
-  web_link_kind: "none" | "manual" | "cloudflare" | "legacy_shared";
+  web_link_kind: "none" | "manual" | "cloudflare" | "legacy_shared" | "local_https";
   web_link_supported: boolean;
   web_link_reason: string | null;
   providers_configured: string[];
@@ -143,6 +143,22 @@ export const disableManagedCaddy = (path: string) =>
 export const connectCloudflareZeroTrust = (
   path: string, port: number, publicUrl: string, token: string,
 ) => invoke<string>("connect_cloudflare_zero_trust", { path, port, publicUrl, token });
+
+export interface CloudflareR2Config {
+  accountId: string;
+  accessKey: string;
+  secretAccessKey: string;
+  bucketName: string;
+  bucketUrl: string;
+  region?: string;
+}
+
+export const applyLocalHttpsDomain = (
+  path: string,
+  port: number,
+  publicUrl: string,
+  r2?: CloudflareR2Config | null,
+) => invoke<string>("apply_local_https_domain", { path, port, publicUrl, r2: r2 ?? null });
 
 export const switchToLocalOnly = (path: string, port: number) =>
   invoke<string>("switch_to_local_only", { path, port });

@@ -35,11 +35,12 @@ fn preferred_public_web_link(state: &SharedState) -> Option<String> {
 
 fn preferred_open_url(state: &SharedState) -> Option<String> {
     preferred_public_web_link(state).or_else(|| {
-        state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .local_url
-            .clone()
+        let s = state.lock().unwrap_or_else(|e| e.into_inner());
+        if s.tunnel_mode == "local_https" {
+            s.permanent_domain.clone().or_else(|| s.local_url.clone())
+        } else {
+            s.local_url.clone()
+        }
     })
 }
 
@@ -291,6 +292,7 @@ pub fn run() {
             commands::web_link::apply_manual_domain,
             commands::web_link::switch_to_local_only,
             commands::web_link::connect_cloudflare_zero_trust,
+            commands::web_link::apply_local_https_domain,
             commands::web_link::verify_public_url,
         ])
         .run(tauri::generate_context!())

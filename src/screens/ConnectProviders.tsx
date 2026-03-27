@@ -317,8 +317,8 @@ export function ConnectProviders() {
     setApplyError(null);
     try {
       // Re-apply tunnel URLs before restarting so Docker picks them up
-      if (!usingLocalCallbacks && publicBaseUrl) {
-        await updateBaseUrls(installPath, publicBaseUrl);
+      if (!usingLocalhostCallbacks && baseUrl) {
+        await updateBaseUrls(installPath, baseUrl);
       }
       await applyConfigTransaction(installPath);
       if (applyOpRef.current !== opId) return; // cancelled
@@ -346,12 +346,16 @@ export function ConnectProviders() {
   const activeProviderDef = providers.find((p) => p.id === activeProvider);
 
   const localBaseUrl = `http://localhost:${port}`;
-  const usingLocalCallbacks = tunnelMode === "none";
+  const usingLocalhostCallbacks = tunnelMode === "none";
+  const localHttpsBaseUrl =
+    tunnelMode === "local_https" && permanentDomain ? permanentDomain : "";
   const publicBaseUrl =
     tunnelUrl ??
     (tunnelMode === "permanent" && permanentDomain ? permanentDomain : "");
-  const missingPublicBaseUrl = !usingLocalCallbacks && !publicBaseUrl;
-  const baseUrl = usingLocalCallbacks ? localBaseUrl : publicBaseUrl;
+  const baseUrl = usingLocalhostCallbacks
+    ? localBaseUrl
+    : localHttpsBaseUrl || publicBaseUrl;
+  const missingBaseUrl = !usingLocalhostCallbacks && !baseUrl;
   const popularProviders = providers.filter((p) => p.popular);
   const otherProviders = providers.filter((p) => !p.popular);
 
@@ -367,7 +371,7 @@ export function ConnectProviders() {
       return "Needs permanent domain";
     }
 
-    if (usingLocalCallbacks) {
+    if (usingLocalhostCallbacks) {
       if (
         provider.noEnvNeeded ||
         provider.supportsLocalCallback ||
@@ -378,7 +382,7 @@ export function ConnectProviders() {
       return "Needs web link";
     }
 
-    if (missingPublicBaseUrl && providerNeedsCallbackBase(provider)) {
+    if (missingBaseUrl && providerNeedsCallbackBase(provider)) {
       return "Web link unavailable";
     }
 
@@ -451,7 +455,7 @@ export function ConnectProviders() {
         Connect social platforms
       </h2>
 
-      {usingLocalCallbacks ? (
+      {usingLocalhostCallbacks ? (
         <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-4 mb-6">
           <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="text-sm text-amber-800">
@@ -465,7 +469,20 @@ export function ConnectProviders() {
             </p>
           </div>
         </div>
-      ) : missingPublicBaseUrl ? (
+      ) : tunnelMode === "local_https" ? (
+        <div className="flex items-start gap-3 rounded-lg bg-blue-50 border border-blue-200 p-4 mb-6">
+          <AlertTriangle className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
+          <div className="text-sm text-blue-800">
+            <p className="font-medium mb-1">Using a local HTTPS domain</p>
+            <p>
+              Postiz is using <span className="font-mono">{baseUrl}</span> on
+              this computer through the hosts file and managed Caddy. That is
+              enough for many OAuth callbacks, but providers that require a
+              truly public domain, such as TikTok, stay locked.
+            </p>
+          </div>
+        </div>
+      ) : missingBaseUrl ? (
         <div className="flex items-start gap-3 rounded-lg bg-amber-50 border border-amber-200 p-4 mb-6">
           <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="text-sm text-amber-800">
@@ -513,12 +530,14 @@ export function ConnectProviders() {
       </div>
 
       {/* Gated provider note */}
-      {(tunnelMode !== "permanent" || missingPublicBaseUrl) && (
+      {(tunnelMode !== "permanent" || missingBaseUrl) && (
         <Card className="mb-6">
           <p className="text-xs text-gray-500">
-            {missingPublicBaseUrl
+            {missingBaseUrl
               ? "Your current web link is not available, so callback-based providers stay locked until that is fixed."
-              : "Some platforms (like TikTok) require a permanent domain. Go back to the Web Link step and configure your own domain to enable them."}
+              : tunnelMode === "local_https"
+                ? "Some platforms, like TikTok, require a truly public domain. Local HTTPS mode is enough for many provider callbacks, but not for public-only platforms."
+                : "Some platforms (like TikTok) require a permanent domain. Go back to the Web Link step and configure your own domain to enable them."}
           </p>
         </Card>
       )}

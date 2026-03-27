@@ -35,7 +35,7 @@ pub struct ResumeState {
     pub install_path: Option<String>,
     pub port: u16,
     pub tunnel_url: Option<String>,
-    pub tunnel_mode: String, // "temporary", "permanent", "none"
+    pub tunnel_mode: String, // "temporary", "permanent", "none", "local_https"
     pub permanent_domain: Option<String>,
     pub providers_configured: Vec<String>,
     pub providers_stale: Vec<String>,
@@ -101,7 +101,7 @@ pub struct InstallSnapshot {
     pub permanent_domain: Option<String>,
 
     // Web link (derived)
-    pub web_link_kind: String, // "none" | "manual" | "cloudflare" | "legacy_shared"
+    pub web_link_kind: String, // "none" | "manual" | "cloudflare" | "legacy_shared" | "local_https"
     pub web_link_supported: bool,
     pub web_link_reason: Option<String>,
 
@@ -141,7 +141,7 @@ pub struct AppState {
     pub port: u16,
     pub local_url: Option<String>,
     pub tunnel_url: Option<String>,
-    pub tunnel_mode: String, // "temporary", "permanent", "none"
+    pub tunnel_mode: String, // "temporary", "permanent", "none", "local_https"
     pub tunnel_provider: TunnelProvider,
     pub permanent_domain: Option<String>,
     pub current_step: usize,

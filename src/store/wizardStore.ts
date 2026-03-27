@@ -64,7 +64,7 @@ export interface WizardState {
   // Step 3: Create Web Link
   tunnelStatus: "idle" | "starting" | "running" | "restarting" | "error";
   tunnelUrl: string | null;
-  tunnelMode: "temporary" | "permanent" | "none";
+  tunnelMode: "temporary" | "permanent" | "none" | "local_https";
   tunnelProvider: "cloudflared" | "manual";
   tunnelConfig: string;
   permanentDomain: string;

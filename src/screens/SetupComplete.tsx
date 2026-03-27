@@ -62,7 +62,11 @@ export function SetupComplete() {
   }, [transferReviewPending, setTransferReviewPending]);
 
   const localUrl = `http://localhost:${port}`;
-  const publicUrl = tunnelUrl ?? (tunnelMode === "permanent" && permanentDomain ? permanentDomain : null);
+  const publicUrl = tunnelUrl ?? (
+    (tunnelMode === "permanent" || tunnelMode === "local_https") && permanentDomain
+      ? permanentDomain
+      : null
+  );
 
   const configuredProviders = Object.entries(providers)
     .filter(([, s]) => s === "configured")
@@ -91,7 +95,7 @@ export function SetupComplete() {
     // Falls back to localhost when a Cloudflare tunnel is disconnected.
     const url = latestSnapshot?.tunnel_alive && latestSnapshot.tunnel_url
       ? latestSnapshot.tunnel_url
-      : latestSnapshot?.web_link_kind === "manual" && latestSnapshot.permanent_domain
+      : (latestSnapshot?.web_link_kind === "manual" || latestSnapshot?.web_link_kind === "local_https") && latestSnapshot?.permanent_domain
         ? latestSnapshot.permanent_domain
         : localUrl;
     try {
@@ -131,6 +135,8 @@ export function SetupComplete() {
   const publicUrlLabel =
     snapshot?.tunnel_alive
       ? "Public URL"
+      : snapshot?.web_link_kind === "local_https"
+        ? "Local HTTPS URL"
       : snapshot?.web_link_kind === "manual"
         ? "Custom Domain"
         : tunnelMode === "permanent"
@@ -189,8 +195,10 @@ export function SetupComplete() {
             {tunnelMode !== "none" && (
               <StatusIndicator
                 status={
-                  snapshot.tunnel_alive
-                    ? "success"
+                    snapshot.tunnel_alive
+                      ? "success"
+                    : snapshot.web_link_kind === "local_https" && snapshot.permanent_domain
+                      ? "success"
                     : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
                       ? "success"
                       : snapshot.web_link_kind === "cloudflare"
@@ -203,6 +211,8 @@ export function SetupComplete() {
                 detail={
                   snapshot.tunnel_alive
                     ? snapshot.tunnel_url ?? "Active"
+                    : snapshot.web_link_kind === "local_https" && snapshot.permanent_domain
+                      ? `Local HTTPS domain: ${snapshot.permanent_domain}`
                     : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
                       ? `Custom domain: ${snapshot.permanent_domain}`
                       : snapshot.web_link_kind === "cloudflare"

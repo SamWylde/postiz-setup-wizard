@@ -238,7 +238,7 @@ export function StatusDashboard() {
     // FRONTEND_URL's domain, so the browser must access via the same URL.
     const url = (snapshot?.tunnel_alive && snapshot?.tunnel_url)
       ? snapshot.tunnel_url
-      : (snapshot?.web_link_kind === "manual" && snapshot?.permanent_domain)
+      : ((snapshot?.web_link_kind === "manual" || snapshot?.web_link_kind === "local_https") && snapshot?.permanent_domain)
         ? snapshot.permanent_domain
         : localUrl;
     try {
@@ -392,6 +392,8 @@ export function StatusDashboard() {
                 ? "loading"
                 : snapshot.tunnel_alive
                   ? "success"
+                  : snapshot.web_link_kind === "local_https" && snapshot.permanent_domain
+                    ? "success"
                   : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
                     ? "success"
                   : snapshot.tunnel_mode === "none"
@@ -410,6 +412,8 @@ export function StatusDashboard() {
                 ? "Checking..."
                 : snapshot.tunnel_alive
                   ? snapshot.tunnel_url ?? "Active"
+                  : snapshot.web_link_kind === "local_https" && snapshot.permanent_domain
+                    ? `Local HTTPS domain: ${snapshot.permanent_domain}`
                   : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
                     ? `Custom domain: ${snapshot.permanent_domain}`
                   : snapshot.tunnel_mode === "none"
@@ -584,6 +588,12 @@ export function StatusDashboard() {
               label={snapshot.web_link_kind === "cloudflare" ? "Configured public URL" : "Custom Domain"}
             />
           )}
+          {!snapshot?.tunnel_alive && snapshot?.web_link_kind === "local_https" && snapshot?.permanent_domain && (
+            <CopyField
+              value={snapshot.permanent_domain}
+              label="Local HTTPS URL"
+            />
+          )}
           <CopyField value={localUrl} label="Local URL" />
 
           <div>
@@ -615,6 +625,8 @@ export function StatusDashboard() {
               <span className="font-medium">
                 {snapshot?.web_link_kind === "cloudflare"
                   ? "Cloudflare Zero Trust"
+                  : snapshot?.web_link_kind === "local_https"
+                    ? "Local HTTPS domain"
                   : snapshot?.web_link_kind === "manual"
                     ? "Custom domain"
                     : snapshot?.web_link_kind === "legacy_shared"

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useWizardStore } from "../store/wizardStore";
 import {
   applyManualDomain,
+  applyLocalHttpsDomain,
   configureManagedCaddy,
   disableManagedCaddy,
   connectCloudflareZeroTrust,
@@ -12,6 +13,8 @@ import {
   runBootstrap,
   scanMachine,
   getInstallSnapshot,
+  readEnvValue,
+  type CloudflareR2Config,
   type BootstrapAction,
   type InstallSnapshot,
 } from "../lib/tauri";
@@ -33,10 +36,12 @@ import {
   RefreshCw,
 } from "lucide-react";
 
-type LinkMethod = "custom-domain" | "cloudflare-zt" | "local-only" | null;
+type LinkMethod = "custom-domain" | "local-https" | "cloudflare-zt" | "local-only" | null;
 type StatusTone = "success" | "error" | "warning" | "loading";
 
 const POSTIZ_CADDY_GUIDE_URL = "https://docs.postiz.com/reverse-proxies/caddy";
+const POSTIZ_R2_GUIDE_URL = "https://docs.postiz.com/configuration/r2";
+const POSTIZ_DOCKER_GUIDE_URL = "https://docs.postiz.com/installation/docker-compose";
 const CADDY_QUICK_START_URL = "https://caddyserver.com/docs/quick-starts/caddyfile";
 const CLOUDFLARE_ADD_SITE_URL =
   "https://developers.cloudflare.com/learning-paths/clientless-access/initial-setup/add-site/";
@@ -45,6 +50,8 @@ const CLOUDFLARE_REGISTER_DOMAIN_URL =
 const CLOUDFLARE_TUNNEL_OVERVIEW_URL = "https://developers.cloudflare.com/tunnel/";
 const CLOUDFLARE_PUBLISHED_APPS_URL =
   "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/routing-to-tunnel/";
+const CLOUDFLARE_PUBLIC_BUCKETS_URL =
+  "https://developers.cloudflare.com/r2/data-access/public-buckets/";
 
 export function CreateWebLink() {
   const {
@@ -79,6 +86,13 @@ export function CreateWebLink() {
   const [showCaddy, setShowCaddy] = useState(true);
   const [unreachableUrl, setUnreachableUrl] = useState<string | null>(null);
   const [editingActiveLink, setEditingActiveLink] = useState(false);
+  const [useR2Storage, setUseR2Storage] = useState(false);
+  const [r2AccountId, setR2AccountId] = useState("");
+  const [r2AccessKey, setR2AccessKey] = useState("");
+  const [r2SecretAccessKey, setR2SecretAccessKey] = useState("");
+  const [r2BucketName, setR2BucketName] = useState("");
+  const [r2BucketUrl, setR2BucketUrl] = useState("");
+  const [r2Region, setR2Region] = useState("auto");
 
   const [linkSnapshot, setLinkSnapshot] = useState<InstallSnapshot | null>(null);
   const [webLinkKind, setWebLinkKind] = useState<string | null>(null);
@@ -111,6 +125,48 @@ export function CreateWebLink() {
     refreshLinkSnapshot().catch(() => {});
   }, [refreshLinkSnapshot, tunnelMode, tunnelProvider]);
 
+  useEffect(() => {
+    if (!installPath) return;
+    let active = true;
+
+    const loadStorageConfig = async () => {
+      try {
+        const [
+          storageProvider,
+          accountId,
+          accessKey,
+          secretAccessKey,
+          bucketName,
+          bucketUrl,
+          region,
+        ] = await Promise.all([
+          readEnvValue(installPath, "STORAGE_PROVIDER"),
+          readEnvValue(installPath, "CLOUDFLARE_ACCOUNT_ID"),
+          readEnvValue(installPath, "CLOUDFLARE_ACCESS_KEY"),
+          readEnvValue(installPath, "CLOUDFLARE_SECRET_ACCESS_KEY"),
+          readEnvValue(installPath, "CLOUDFLARE_BUCKETNAME"),
+          readEnvValue(installPath, "CLOUDFLARE_BUCKET_URL"),
+          readEnvValue(installPath, "CLOUDFLARE_REGION"),
+        ]);
+        if (!active || !mountedRef.current) return;
+        setUseR2Storage(storageProvider === "cloudflare");
+        setR2AccountId(accountId ?? "");
+        setR2AccessKey(accessKey ?? "");
+        setR2SecretAccessKey(secretAccessKey ?? "");
+        setR2BucketName(bucketName ?? "");
+        setR2BucketUrl(bucketUrl ?? "");
+        setR2Region(region ?? "auto");
+      } catch {
+        // Ignore env read failures here; users can still enter values manually.
+      }
+    };
+
+    loadStorageConfig();
+    return () => {
+      active = false;
+    };
+  }, [installPath]);
+
   const cloudflaredInstalled = machineState?.cloudflared_installed ?? false;
   const caddyInstalled = machineState?.caddy_installed ?? false;
 
@@ -131,6 +187,8 @@ export function CreateWebLink() {
   const fallbackLinkKind =
     tunnelMode === "none"
       ? "none"
+      : tunnelMode === "local_https"
+        ? "local_https"
       : tunnelMode === "permanent"
         ? tunnelProvider === "manual"
           ? "manual"
@@ -146,9 +204,11 @@ export function CreateWebLink() {
   const hasConfiguredLink =
     effectiveLinkKind === "manual" ||
     effectiveLinkKind === "cloudflare" ||
+    effectiveLinkKind === "local_https" ||
     effectiveLinkKind === "legacy_shared";
   const hasUsableLink =
     tunnelMode === "none" ||
+    (effectiveLinkKind === "local_https" && !!activeLinkUrl) ||
     (effectiveLinkKind === "manual" && !!activeLinkUrl) ||
     (effectiveLinkKind === "cloudflare" && Boolean(linkSnapshot?.tunnel_alive));
   const cloudflareLinkDisconnected =
@@ -175,7 +235,9 @@ export function CreateWebLink() {
         : linkSnapshot.tunnel_alive
           ? "Web link is active"
           : "Web link is configured but disconnected"
-      : "Web link is active";
+      : effectiveLinkKind === "local_https"
+        ? "Local HTTPS domain is active"
+        : "Web link is active";
   const activeLinkDetail =
     effectiveLinkKind === "cloudflare"
       ? linkSnapshot === null
@@ -183,6 +245,8 @@ export function CreateWebLink() {
         : linkSnapshot.tunnel_alive
           ? "Cloudflare Zero Trust is connected."
           : "Reconnect or change it before connecting social accounts."
+      : effectiveLinkKind === "local_https"
+        ? "This HTTPS hostname works on this computer only through the hosts file and managed Caddy."
       : effectiveLinkKind === "manual"
         ? "Your custom domain is configured."
         : undefined;
@@ -336,6 +400,105 @@ export function CreateWebLink() {
     }
   };
 
+  const handleApplyLocalHttps = async () => {
+    const raw = permanentDomain.trim();
+    if (!raw) return;
+
+    const domain = raw.replace(/\/+$/, "");
+    if (!domain.startsWith("https://")) {
+      showStatus("error", "Local HTTPS domain must start with https://");
+      return;
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(domain);
+    } catch {
+      showStatus("error", "Invalid URL format. Enter a full URL like https://postiz.grantcue.com");
+      return;
+    }
+
+    if (!parsed.hostname.includes(".") || parsed.hostname === "localhost") {
+      showStatus("error", "Use a real hostname like https://postiz.grantcue.com, not localhost.");
+      return;
+    }
+
+    const r2Config: CloudflareR2Config | null = useR2Storage
+      ? {
+          accountId: r2AccountId.trim(),
+          accessKey: r2AccessKey.trim(),
+          secretAccessKey: r2SecretAccessKey.trim(),
+          bucketName: r2BucketName.trim(),
+          bucketUrl: r2BucketUrl.trim().replace(/\/+$/, ""),
+          region: r2Region.trim() || "auto",
+        }
+      : null;
+
+    if (useR2Storage) {
+      if (
+        !r2Config?.accountId ||
+        !r2Config.accessKey ||
+        !r2Config.secretAccessKey ||
+        !r2Config.bucketName ||
+        !r2Config.bucketUrl
+      ) {
+        showStatus("error", "Fill in every Cloudflare R2 field, or turn off the R2 option for now.");
+        return;
+      }
+      if (!r2Config.bucketUrl.startsWith("https://")) {
+        showStatus("error", "Cloudflare R2 public bucket URL must start with https://");
+        return;
+      }
+    }
+
+    const opId = ++opRef.current;
+    setApplying(true);
+    showStatus(
+      "loading",
+      caddyInstalled
+        ? "Configuring local HTTPS domain..."
+        : "Installing Caddy and configuring the local HTTPS domain...",
+    );
+
+    try {
+      if (!caddyInstalled) {
+        await runBootstrap("InstallCaddy" as BootstrapAction);
+        if (!mountedRef.current || opRef.current !== opId) return;
+      }
+
+      const state = await scanMachine();
+      if (!mountedRef.current || opRef.current !== opId) return;
+      setMachineState(state);
+      setScanError(null);
+
+      const result = await applyLocalHttpsDomain(
+        installPath,
+        port,
+        domain,
+        r2Config,
+      );
+      if (!mountedRef.current || opRef.current !== opId) return;
+
+      setPermanentDomain(domain);
+      setTunnelUrl(null);
+      setTunnelMode("local_https");
+      setTunnelProvider("manual");
+      setTunnelConfig("");
+      setTunnelStatus("running");
+      showStatus("success", result);
+      setEditingActiveLink(false);
+      setSelectedMethod(null);
+      setUnreachableUrl(null);
+      await saveResumeState();
+      await refreshLinkSnapshot().catch(() => {});
+    } catch (err) {
+      if (!mountedRef.current || opRef.current !== opId) return;
+      showStatus("error", friendlyError(String(err)));
+    } finally {
+      if (mountedRef.current && opRef.current === opId) setApplying(false);
+    }
+  };
+
   const handleConnectZeroTrust = async () => {
     const url = permanentDomain.trim().replace(/\/+$/, "");
     const token = tunnelConfig.trim();
@@ -452,8 +615,9 @@ export function CreateWebLink() {
         Create a web link
       </h2>
       <p className="text-gray-600 mb-6">
-        Social media platforms need a public URL to communicate with Postiz.
-        Choose how you'd like to make Postiz accessible.
+        Choose how Postiz should be reached for login callbacks and social
+        integrations. This can be a real public domain, or a local HTTPS domain
+        that only resolves on this computer.
       </p>
 
       <Card className="mb-6 bg-slate-50/70">
@@ -474,7 +638,7 @@ export function CreateWebLink() {
             <li>Choose how traffic reaches this computer.</li>
             <li>This wizard updates Postiz to use that URL everywhere.</li>
           </ol>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <div className="rounded-lg border border-gray-200 bg-white p-3">
               <p className="text-xs font-medium text-gray-900 mb-1">
                 Custom Domain
@@ -482,6 +646,15 @@ export function CreateWebLink() {
               <p className="text-xs text-gray-600">
                 You handle DNS and a reverse proxy such as Caddy, Nginx, or
                 Traefik.
+              </p>
+            </div>
+            <div className="rounded-lg border border-gray-200 bg-white p-3">
+              <p className="text-xs font-medium text-gray-900 mb-1">
+                Local HTTPS Domain
+              </p>
+              <p className="text-xs text-gray-600">
+                The wizard maps a real hostname to this computer only, adds
+                HTTPS with Caddy, and avoids router changes.
               </p>
             </div>
             <div className="rounded-lg border border-gray-200 bg-white p-3">
@@ -498,8 +671,9 @@ export function CreateWebLink() {
                 Local Only
               </p>
               <p className="text-xs text-gray-600">
-                Postiz stays on this computer only. Social integrations will not
-                work.
+                Postiz stays on this computer only at localhost. Many providers
+                can still use localhost callbacks, but some platforms need a
+                different mode above.
               </p>
             </div>
           </div>
@@ -563,7 +737,13 @@ export function CreateWebLink() {
             {activeLinkUrl && (
               <CopyField
                 value={activeLinkUrl}
-                label={cloudflareLinkDisconnected ? "Configured public URL" : "Your web link"}
+                label={
+                  effectiveLinkKind === "local_https"
+                    ? "Local HTTPS URL"
+                    : cloudflareLinkDisconnected
+                      ? "Configured public URL"
+                      : "Your web link"
+                }
               />
             )}
             <div className="flex gap-2">
@@ -630,6 +810,30 @@ export function CreateWebLink() {
 
             {/* Card 2: Cloudflare Zero Trust */}
             <button
+              onClick={() => handleSelectMethod("local-https")}
+              className={`text-left rounded-lg border-2 p-4 transition-colors ${
+                selectedMethod === "local-https"
+                  ? "border-blue-500 bg-blue-50"
+                  : "border-gray-200 hover:border-gray-300 bg-white"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Monitor className="h-5 w-5 text-teal-600 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-gray-900">
+                    Local HTTPS Domain
+                  </p>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Best when you want a real HTTPS hostname for local OAuth
+                    testing without moving DNS to Cloudflare or opening router
+                    ports.
+                  </p>
+                </div>
+              </div>
+            </button>
+
+            {/* Card 3: Cloudflare Zero Trust */}
+            <button
               onClick={() => handleSelectMethod("cloudflare-zt")}
               className={`text-left rounded-lg border-2 p-4 transition-colors ${
                 selectedMethod === "cloudflare-zt"
@@ -652,7 +856,7 @@ export function CreateWebLink() {
               </div>
             </button>
 
-            {/* Card 3: Local Only */}
+            {/* Card 4: Local Only */}
             <button
               onClick={() => handleSelectMethod("local-only")}
               className={`text-left rounded-lg border-2 p-4 transition-colors ${
@@ -668,8 +872,9 @@ export function CreateWebLink() {
                     Local Only
                   </p>
                   <p className="text-xs text-gray-500 mt-0.5">
-                    Simplest option. Access Postiz on this computer only and
-                    skip social media integrations.
+                    Simplest option. Use localhost on this computer only.
+                    Many providers still work, but Meta-style hostname checks
+                    may need the local HTTPS option instead.
                   </p>
                 </div>
               </div>
@@ -1033,6 +1238,189 @@ NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api`}
           )}
 
           {/* ── Cloudflare Zero Trust Expanded ─────────── */}
+          {selectedMethod === "local-https" && (
+            <Card className="mb-6">
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <Monitor className="h-4 w-4 text-teal-600" />
+                  <h3 className="text-sm font-medium text-gray-900">
+                    Local HTTPS Domain Setup
+                  </h3>
+                </div>
+
+                <div className="rounded-lg border border-teal-200 bg-teal-50 p-4 space-y-3">
+                  <div>
+                    <p className="text-sm font-medium text-teal-950">
+                      Use this when you want a real HTTPS hostname locally, but not a public website
+                    </p>
+                    <p className="text-xs text-teal-900/80 mt-1">
+                      The wizard will add a hosts-file entry on this computer,
+                      run Caddy as a local HTTPS reverse proxy, and point that
+                      hostname at your Postiz install on localhost.
+                    </p>
+                  </div>
+                  <ol className="text-sm text-teal-950 list-decimal list-inside space-y-1">
+                    <li>Choose a hostname you already control, like <code className="bg-white px-1 rounded">https://postiz.grantcue.com</code>.</li>
+                    <li>The wizard maps that hostname to <code className="bg-white px-1 rounded">127.0.0.1</code> in your Windows hosts file.</li>
+                    <li>The wizard configures managed Caddy with a local HTTPS certificate.</li>
+                    <li>Your browser opens Postiz at that HTTPS hostname on this computer only.</li>
+                    <li>For public media delivery, you can optionally save Cloudflare R2 settings below.</li>
+                  </ol>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <p className="text-xs font-medium text-gray-900 mb-1">
+                      What this solves
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      This helps with providers that dislike plain localhost but
+                      only need your browser to return to a stable HTTPS domain
+                      on this machine.
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    <p className="text-xs font-medium text-gray-900 mb-1">
+                      What this does not do
+                    </p>
+                    <p className="text-xs text-gray-600">
+                      It does not make Postiz public on the internet. Other
+                      devices cannot use this hostname unless you configure them
+                      separately.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-2">
+                  <p className="text-xs font-medium text-gray-900">
+                    If you already own a domain
+                  </p>
+                  <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                    <li>Pick a subdomain you are not using publicly, such as <code className="bg-gray-100 px-1 rounded">postiz.grantcue.com</code>.</li>
+                    <li>You do not need to move DNS to Cloudflare and you do not need router changes for this mode.</li>
+                    <li>Your existing public DNS can keep pointing somewhere else; this computer will override that hostname locally with the hosts file.</li>
+                    <li>Open providers in the next step using this exact HTTPS hostname.</li>
+                  </ol>
+                </div>
+
+                <Input
+                  label="Local HTTPS URL"
+                  placeholder="https://postiz.grantcue.com"
+                  value={permanentDomain}
+                  onChange={(e) => setPermanentDomain(e.target.value)}
+                  disabled={applying}
+                />
+
+                <div className="rounded-lg border border-gray-200 bg-white p-3 space-y-3">
+                  <label className="flex items-start gap-3">
+                    <input
+                      type="checkbox"
+                      className="mt-1"
+                      checked={useR2Storage}
+                      onChange={(e) => setUseR2Storage(e.target.checked)}
+                      disabled={applying}
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-gray-900">
+                        Also save Cloudflare R2 media storage settings
+                      </p>
+                      <p className="text-xs text-gray-600 mt-1">
+                        Use this if you want uploaded images and videos served
+                        from a public R2 bucket such as <code className="bg-gray-100 px-1 rounded">https://pub-xxxxx.r2.dev</code>.
+                        That is useful when a social platform needs to fetch
+                        media from a public URL even though Postiz itself stays local.
+                      </p>
+                    </div>
+                  </label>
+
+                  {useR2Storage && (
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <Input label="R2 Account ID" value={r2AccountId} onChange={(e) => setR2AccountId(e.target.value)} disabled={applying} />
+                      <Input label="R2 Access Key ID" value={r2AccessKey} onChange={(e) => setR2AccessKey(e.target.value)} disabled={applying} />
+                      <Input label="R2 Secret Access Key" value={r2SecretAccessKey} onChange={(e) => setR2SecretAccessKey(e.target.value)} disabled={applying} secret />
+                      <Input label="R2 Bucket Name" value={r2BucketName} onChange={(e) => setR2BucketName(e.target.value)} disabled={applying} />
+                      <Input label="R2 Public Bucket URL" placeholder="https://pub-xxxxx.r2.dev" value={r2BucketUrl} onChange={(e) => setR2BucketUrl(e.target.value)} disabled={applying} />
+                      <Input label="R2 Region" value={r2Region} onChange={(e) => setR2Region(e.target.value)} disabled={applying} />
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => open(POSTIZ_R2_GUIDE_URL)} className="text-xs text-blue-600 hover:text-blue-700 underline">
+                      Postiz R2 guide
+                    </button>
+                    <button onClick={() => open(POSTIZ_DOCKER_GUIDE_URL)} className="text-xs text-blue-600 hover:text-blue-700 underline">
+                      Postiz Docker env guide
+                    </button>
+                    <button onClick={() => open(CLOUDFLARE_PUBLIC_BUCKETS_URL)} className="text-xs text-blue-600 hover:text-blue-700 underline">
+                      Cloudflare public bucket guide
+                    </button>
+                  </div>
+                </div>
+
+                <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-2">
+                  <p className="text-xs font-medium text-gray-900">
+                    What the wizard will do for you
+                  </p>
+                  <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                    <li>Install Caddy if it is missing.</li>
+                    <li>Write a local HTTPS Caddyfile that proxies to <code className="bg-white px-1 rounded">http://localhost:{port}</code>.</li>
+                    <li>Run that Caddy config as a Windows service.</li>
+                    <li>Add the hostname to the Windows hosts file on this computer.</li>
+                    <li>Update Postiz so its base URLs match the HTTPS hostname exactly.</li>
+                  </ol>
+                </div>
+
+                {statusMessage && (
+                  <StatusIndicator
+                    status={statusTone}
+                    label={statusMessage}
+                  />
+                )}
+
+                {applying && (
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      opRef.current++;
+                      try { await cancelDockerOperation(); } catch {}
+                      setApplying(false);
+                      showStatus("warning", "Cancelled.");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                )}
+
+                <Button
+                  onClick={handleApplyLocalHttps}
+                  disabled={!permanentDomain.trim() || applying}
+                >
+                  {applying ? "Applying..." : "Apply Local HTTPS Setup"}
+                </Button>
+
+                {permanentDomain.trim() && permanentDomain.trim().startsWith("https://") && (
+                  <details className="text-xs text-gray-500">
+                    <summary className="cursor-pointer hover:text-gray-700">
+                      Environment variables that will be set
+                    </summary>
+                    <pre className="mt-1 bg-gray-50 rounded border border-gray-200 p-2 overflow-x-auto">
+{`MAIN_URL=${permanentDomain.trim().replace(/\/+$/, "")}
+FRONTEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}
+NEXT_PUBLIC_BACKEND_URL=${permanentDomain.trim().replace(/\/+$/, "")}/api${useR2Storage ? `
+STORAGE_PROVIDER=cloudflare
+CLOUDFLARE_ACCOUNT_ID=${r2AccountId || "(your account id)"}
+CLOUDFLARE_ACCESS_KEY=${r2AccessKey || "(your access key id)"}
+CLOUDFLARE_SECRET_ACCESS_KEY=${r2SecretAccessKey ? "***" : "(your secret access key)"}
+CLOUDFLARE_BUCKETNAME=${r2BucketName || "(your bucket name)"}
+CLOUDFLARE_BUCKET_URL=${r2BucketUrl || "(your public bucket url)"}
+CLOUDFLARE_REGION=${r2Region || "auto"}` : ""}`}
+                    </pre>
+                  </details>
+                )}
+              </div>
+            </Card>
+          )}
+
           {selectedMethod === "cloudflare-zt" && (
             <Card className="mb-6">
               <div className="space-y-4">

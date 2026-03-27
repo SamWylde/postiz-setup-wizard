@@ -189,6 +189,8 @@ export function RecoveryCenter({
             status={
               snapshot.tunnel_alive
                 ? "success"
+                : snapshot.web_link_kind === "local_https" && snapshot.permanent_domain
+                  ? "success"
                 : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
                   ? "success"
                   : snapshot.web_link_kind === "cloudflare"
@@ -201,6 +203,8 @@ export function RecoveryCenter({
             detail={
               snapshot.tunnel_alive
                 ? snapshot.tunnel_url ?? "Active"
+                : snapshot.web_link_kind === "local_https" && snapshot.permanent_domain
+                  ? `Local HTTPS domain: ${snapshot.permanent_domain}`
                 : snapshot.web_link_kind === "manual" && snapshot.permanent_domain
                   ? `Custom domain: ${snapshot.permanent_domain}`
                   : snapshot.web_link_kind === "cloudflare"

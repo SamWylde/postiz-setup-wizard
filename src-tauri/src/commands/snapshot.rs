@@ -34,6 +34,7 @@ fn infer_tunnel_provider(
             }
         }
         "none" => "manual".to_string(),
+        "local_https" => "manual".to_string(),
         _ => existing_provider.to_string(),
     }
 }
@@ -272,6 +273,14 @@ pub async fn get_install_snapshot(
     // Derive web_link_* fields from tunnel_mode + tunnel_provider
     let (web_link_kind, web_link_supported, web_link_reason) = match tunnel_mode.as_str() {
         "none" => ("none".to_string(), true, None),
+        "local_https" => (
+            "local_https".to_string(),
+            true,
+            Some(
+                "This hostname is mapped to this computer only. It is useful for local HTTPS OAuth testing, not for a public website."
+                    .to_string(),
+            ),
+        ),
         "permanent" => {
             if tunnel_provider == "cloudflared" {
                 ("cloudflare".to_string(), true, None)
@@ -588,6 +597,7 @@ fn read_env_metadata(install_path: &std::path::Path) -> EnvMetadata {
     let mut port: Option<u16> = None;
     let mut main_url: Option<String> = None;
     let mut env_map: Vec<(String, String)> = Vec::new();
+    let mut wizard_web_link_mode: Option<String> = None;
 
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -610,6 +620,9 @@ fn read_env_metadata(install_path: &std::path::Path) -> EnvMetadata {
                     port = parts[1].parse::<u16>().ok();
                 }
             }
+            if key == "POSTIZ_WIZARD_WEB_LINK_MODE" {
+                wizard_web_link_mode = Some(value.to_lowercase());
+            }
             env_map.push((key, value));
         }
     }
@@ -631,7 +644,9 @@ fn read_env_metadata(install_path: &std::path::Path) -> EnvMetadata {
             || url.contains(".pinggy.link")
             || url.contains(".pinggy.io");
         let is_public_https = url.starts_with("https://") && !url.contains("localhost");
-        if is_local {
+        if wizard_web_link_mode.as_deref() == Some("local_https") {
+            (Some("local_https".to_string()), Some(url.clone()), true)
+        } else if is_local {
             (Some("none".to_string()), None, false)
         } else if is_public_https && is_ephemeral {
             (Some("temporary".to_string()), None, true)
@@ -722,6 +737,27 @@ mod tests {
         assert_eq!(env.tunnel_mode.as_deref(), Some("none"));
         assert_eq!(env.permanent_domain, None);
         assert!(!env.public_url_configured);
+
+        fs::remove_dir_all(&dir).expect("temp install dir should be removed");
+    }
+
+    #[test]
+    fn read_env_metadata_marks_local_https_domains_via_wizard_marker() {
+        let dir = make_temp_install_dir();
+        fs::write(
+            dir.join("postiz.env"),
+            "MAIN_URL=https://postiz.grantcue.test\nPOSTIZ_WIZARD_WEB_LINK_MODE=local_https\n",
+        )
+        .expect("postiz.env should be written");
+
+        let env = read_env_metadata(&dir);
+
+        assert_eq!(env.tunnel_mode.as_deref(), Some("local_https"));
+        assert_eq!(
+            env.permanent_domain.as_deref(),
+            Some("https://postiz.grantcue.test")
+        );
+        assert!(env.public_url_configured);
 
         fs::remove_dir_all(&dir).expect("temp install dir should be removed");
     }

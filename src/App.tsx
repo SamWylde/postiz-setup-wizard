@@ -64,7 +64,7 @@ function App() {
           hydrateFromResume({
             installPath: resume.install_path || undefined,
             port: resume.port || undefined,
-            tunnelMode: (resume.tunnel_mode as "temporary" | "permanent" | "none") || undefined,
+            tunnelMode: (resume.tunnel_mode as "temporary" | "permanent" | "none" | "local_https") || undefined,
             permanentDomain: resume.permanent_domain || undefined,
             tunnelProvider: resume.tunnel_provider
               ? parseTunnelProvider(resume.tunnel_provider)
@@ -114,7 +114,7 @@ function App() {
         hydrateFromResume({
           installPath: snap.install_path,
           port: snap.port,
-          tunnelMode: snap.tunnel_mode as "temporary" | "permanent" | "none",
+          tunnelMode: snap.tunnel_mode as "temporary" | "permanent" | "none" | "local_https",
           permanentDomain: snap.permanent_domain || undefined,
           tunnelProvider: parseTunnelProvider(snap.tunnel_provider),
           providers,
